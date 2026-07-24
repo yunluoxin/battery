@@ -95,6 +95,12 @@ Usage:
     manually set the adapter to (not) charge even when plugged in
     eg: battery adapter off
 
+  battery low SETTING[on/off/status]
+    toggle macOS Low Power Mode (pmset lowpowermode on battery power only)
+    tracks state across reboots; warns on drift if changed via System Settings
+    eg: battery low on
+    eg: battery low status
+
   battery calibrate
     calibrate the battery by discharging it to 15%, then recharging it to 100%, and keeping it there for 1 hour
 

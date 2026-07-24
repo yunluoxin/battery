@@ -24,6 +24,7 @@ pidfile=$configfolder/battery.pid
 logfile=$configfolder/battery.log
 maintain_percentage_tracker_file=$configfolder/maintain.percentage
 maintain_voltage_tracker_file=$configfolder/maintain.voltage
+low_power_tracker_file=$configfolder/low_power.mode
 daemon_path=$HOME/Library/LaunchAgents/battery.plist
 calibrate_pidfile=$configfolder/calibrate.pid
 path_configfile=/etc/paths.d/50-battery
@@ -106,6 +107,12 @@ Usage:
   battery adapter SETTING[on/off]
     manually set the adapter to (not) charge even when plugged in
     eg: battery adapter off
+
+  battery low SETTING[on/off/status]
+    toggle macOS Low Power Mode (pmset lowpowermode on battery power only)
+    tracks state across reboots; warns on drift if changed via System Settings
+    eg: battery low on
+    eg: battery low status
 
   battery calibrate
     calibrate the battery by discharging it to 15%, then recharging it to 100%, and keeping it there for 1 hour
@@ -409,6 +416,23 @@ function get_smc_discharging_status() {
 		echo "not discharging"
 	else
 		echo "discharging"
+	fi
+}
+
+# Read the system-wide Low Power Mode state on battery power.
+# Returns: "on", "off", or "unsupported" on legacy macOS without lowpowermode key.
+function get_low_power_state() {
+	local line
+	line=$(pmset -g 2>/dev/null | grep -E "^\s*lowpowermode" | head -n1)
+	if [[ -z "$line" ]]; then
+		echo "unsupported"
+		return
+	fi
+	# The line looks like: " lowpowermode 1" or " lowpowermode 0"
+	if echo "$line" | grep -q " 1$"; then
+		echo "on"
+	else
+		echo "off"
 	fi
 }
 
@@ -789,6 +813,48 @@ if [[ "$action" == "adapter" ]]; then
 	else
 		log "Error: $setting is not \"on\" or \"off\"."
 		exit 1
+	fi
+
+	exit 0
+
+fi
+
+# Low Power Mode controller
+if [[ "$action" == "low" ]]; then
+
+	# Query-only path: just print the current system state
+	if [[ "$setting" == "status" ]]; then
+		actual=$(get_low_power_state)
+		intended=$(cat $low_power_tracker_file 2>/dev/null)
+		if [[ -z "$intended" ]]; then
+			log "Low Power Mode: not managed by battery CLI (system: $actual)"
+		elif [[ "$intended" != "$actual" ]]; then
+			log "⚠️  Drift: battery CLI requested '$intended' but system is '$actual'"
+			log "    Syncing tracker. Re-run 'battery low $intended' to enforce."
+			echo "$actual" > $low_power_tracker_file
+			log "Low Power Mode: $actual (drift corrected; was requested $intended)"
+		else
+			log "Low Power Mode: $actual (managed by battery CLI)"
+		fi
+		exit 0
+	fi
+
+	log "Setting $action to $setting"
+
+	if [[ "$setting" != "on" && "$setting" != "off" ]]; then
+		log "Error: $setting is not \"on\", \"off\", or \"status\"."
+		exit 1
+	fi
+
+	# Apply system-wide on battery power only (does not touch AC behaviour)
+	if [[ "$setting" == "on" ]]; then
+		sudo pmset -b lowpowermode 1 >/dev/null 2>&1 || { log "⚠️ Failed to set lowpowermode via pmset"; exit 1; }
+		echo "on" > $low_power_tracker_file
+		log "🔋⚡ Low Power Mode enabled"
+	else
+		sudo pmset -b lowpowermode 0 >/dev/null 2>&1 || { log "⚠️ Failed to set lowpowermode via pmset"; exit 1; }
+		rm -f $low_power_tracker_file
+		log "🔋⚡ Low Power Mode disabled"
 	fi
 
 	exit 0
@@ -1179,6 +1245,20 @@ fi
 if [[ "$action" == "status" ]]; then
 
 	log "Battery at $(get_battery_percentage)% ($(get_remaining_time) remaining), $(get_voltage)V, smc charging $(get_smc_charging_status)"
+
+	# Surface Low Power Mode state (with drift detection against tracker)
+	low_power_actual=$(get_low_power_state)
+	low_power_intended=$(cat $low_power_tracker_file 2>/dev/null)
+	if [[ -z "$low_power_intended" ]]; then
+		log "Low Power Mode: not managed by battery CLI (system: $low_power_actual)"
+	elif [[ "$low_power_intended" != "$low_power_actual" ]]; then
+		log "⚠️  Low Power Mode drift: battery CLI requested '$low_power_intended' but system is '$low_power_actual' (was changed via System Settings?)"
+		log "    Syncing tracker. Re-run 'battery low $low_power_intended' to enforce."
+		echo "$low_power_actual" > $low_power_tracker_file
+	else
+		log "Low Power Mode: $low_power_actual (managed by battery CLI)"
+	fi
+
 	if test -f $pidfile; then
 		maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
 		if [[ $maintain_percentage ]]; then
