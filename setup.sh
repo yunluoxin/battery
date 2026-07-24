@@ -23,6 +23,18 @@
 # Reset PATH to minimal safe defaults
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
+# Resolve the project directory from this script's location, not the caller's cwd.
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+local_mode=false
+if [[ "$1" == "--local" ]]; then
+	local_mode=true
+	shift
+fi
+if [[ "$#" -gt 1 ]]; then
+	echo "Usage: $0 [--local] [username]"
+	exit 1
+fi
+
 # User welcome message
 echo -e "\n####################################################################"
 echo '# 👋 Welcome, this is the setup script for the battery CLI tool.'
@@ -65,17 +77,26 @@ tempfolder="$(mktemp -d)"
 function cleanup() { rm -rf "$tempfolder"; }
 trap cleanup EXIT
 
-echo "[  3 ] Downloading latest version of battery CLI"
-# Note: github names zips by <reponame>-<branchname>.replace( '/', '-' )
-update_branch="main"
-in_zip_folder_name="battery-$update_branch"
-batteryfolder="$tempfolder/battery"
-rm -rf $batteryfolder
-mkdir -p $batteryfolder
-curl -sSL -o $batteryfolder/repo.zip "https://github.com/actuallymentor/battery/archive/refs/heads/$update_branch.zip"
-unzip -qq $batteryfolder/repo.zip -d $batteryfolder
-cp -r $batteryfolder/$in_zip_folder_name/* $batteryfolder
-rm $batteryfolder/repo.zip
+if [[ "$local_mode" == true ]]; then
+	echo "[  3 ] Using local project source: $script_dir"
+	batteryfolder="$script_dir"
+	if [[ ! -f "$batteryfolder/battery.sh" || ! -f "$batteryfolder/dist/smc" ]]; then
+		echo "❌ Local source is missing battery.sh or dist/smc"
+		exit 1
+	fi
+else
+	echo "[  3 ] Downloading latest version of battery CLI"
+	# Note: github names zips by <reponame>-<branchname>.replace( '/', '-' )
+	update_branch="main"
+	in_zip_folder_name="battery-$update_branch"
+	batteryfolder="$tempfolder/battery"
+	rm -rf "$batteryfolder"
+	mkdir -p "$batteryfolder"
+	curl -sSL -o "$batteryfolder/repo.zip" "https://github.com/actuallymentor/battery/archive/refs/heads/$update_branch.zip"
+	unzip -qq "$batteryfolder/repo.zip" -d "$batteryfolder"
+	cp -r "$batteryfolder/$in_zip_folder_name"/* "$batteryfolder"
+	rm "$batteryfolder/repo.zip"
+fi
 
 echo "[  4 ] Make sure $binfolder is recreated and owned by root"
 sudo rm -rf "$binfolder" # start with an empty $binfolder and ensure there is no symlink or file at the path
