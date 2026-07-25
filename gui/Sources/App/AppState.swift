@@ -216,12 +216,13 @@ final class AppState: ObservableObject {
         Task {
             do {
                 _ = try await cli.setLowPower(on)
-                lowPowerOverride = nil  // success: system state now matches intent
             } catch {
-                lowPowerOverride = nil
                 await refreshAsync()    // revert to actual system state
                 show(error)
             }
+            // Keep the override: low-power state is independent of charge /
+            // discharge / maintain cycles, so later refreshes (which run after
+            // those actions) must not snap the toggle back to the system value.
         }
     }
 

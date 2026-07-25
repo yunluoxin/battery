@@ -107,25 +107,19 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
     }
 
     /// Read Low Power Mode straight from pmset (user-space, no sudo needed).
-    /// `pmset -g` merges AC+battery and can show 0 while the battery-only (-b)
-    /// setting is 1; `pmset -g custom` exposes the per-source sections.
+    /// The CLI sets it with `-a` (all power sources), so the merged `pmset -g`
+    /// view is authoritative.
     private static func readLowPowerState() -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g", "custom"]
+        process.arguments = ["-g"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return false }
         process.waitUntilExit()
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        // Find the "Battery Power" section and read its lowpowermode value.
-        guard let batteryRange = out.range(of: "Battery Power", options: .caseInsensitive) else {
-            // Fall back to any lowpowermode line if sections are absent.
-            return out.range(of: #"^\s*lowpowermode\s+1"#, options: .regularExpression) != nil
-        }
-        let section = out[batteryRange.lowerBound...]
-        return section.range(of: #"^\s*lowpowermode\s+1"#, options: .regularExpression) != nil
+        return out.range(of: #"^\s*lowpowermode\s+1"#, options: .regularExpression) != nil
     }
 
     public func run(_ arguments: [String]) async throws -> CLIResult {

@@ -71,7 +71,7 @@ struct PopoverView: View {
     // MARK: Status
 
     private var statusSection: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .center) {
             Text(state.status.map { "\($0.percentage)%" } ?? "--")
                 .font(.system(size: 36, weight: .semibold))
             VStack(alignment: .leading, spacing: 2) {

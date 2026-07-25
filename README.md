@@ -96,7 +96,7 @@ Usage:
     eg: battery adapter off
 
   battery low SETTING[on/off/status]
-    toggle macOS Low Power Mode (pmset lowpowermode on battery power only)
+    toggle macOS Low Power Mode (pmset lowpowermode, all power sources)
     tracks state across reboots; warns on drift if changed via System Settings
     eg: battery low on
     eg: battery low status

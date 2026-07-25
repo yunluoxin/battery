@@ -109,7 +109,7 @@ Usage:
     eg: battery adapter off
 
   battery low SETTING[on/off/status]
-    toggle macOS Low Power Mode (pmset lowpowermode on battery power only)
+    toggle macOS Low Power Mode (pmset lowpowermode, all power sources)
     tracks state across reboots; warns on drift if changed via System Settings
     eg: battery low on
     eg: battery low status
@@ -163,8 +163,8 @@ ALL ALL = NOPASSWD: FORCE_DISCHARGE_OFF
 ALL ALL = NOPASSWD: FORCE_DISCHARGE_ON
 ALL ALL = NOPASSWD: LED_CONTROL
 
-# Allow passwordless Low Power Mode toggling (battery power only, -b)
-Cmnd_Alias    LOW_POWER_MODE = /usr/bin/pmset -b lowpowermode 1, /usr/bin/pmset -b lowpowermode 0
+# Allow passwordless Low Power Mode toggling (all power sources, -a)
+Cmnd_Alias    LOW_POWER_MODE = /usr/bin/pmset -a lowpowermode 1, /usr/bin/pmset -a lowpowermode 0
 ALL ALL = NOPASSWD: LOW_POWER_MODE
 
 # Temporarily keep passwordless SMC reading commands so the old menubar GUI versions don't ask for password on each launch
@@ -850,13 +850,13 @@ if [[ "$action" == "low" ]]; then
 		exit 1
 	fi
 
-	# Apply system-wide on battery power only (does not touch AC behaviour)
+	# Apply system-wide on all power sources (-a)
 	if [[ "$setting" == "on" ]]; then
-		sudo pmset -b lowpowermode 1 >/dev/null 2>&1 || { log "⚠️ Failed to set lowpowermode via pmset"; exit 1; }
+		sudo pmset -a lowpowermode 1 >/dev/null 2>&1 || { log "⚠️ Failed to set lowpowermode via pmset"; exit 1; }
 		echo "on" > $low_power_tracker_file
 		log "🔋⚡ Low Power Mode enabled"
 	else
-		sudo pmset -b lowpowermode 0 >/dev/null 2>&1 || { log "⚠️ Failed to set lowpowermode via pmset"; exit 1; }
+		sudo pmset -a lowpowermode 0 >/dev/null 2>&1 || { log "⚠️ Failed to set lowpowermode via pmset"; exit 1; }
 		rm -f $low_power_tracker_file
 		log "🔋⚡ Low Power Mode disabled"
 	fi
