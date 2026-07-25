@@ -42,16 +42,18 @@ struct RangeSlider: View {
     // MARK: Track
 
     private func track(width: CGFloat) -> some View {
-        let lowerX = xPosition(for: lower, width: width)
-        let upperX = xPosition(for: upper, width: width)
+        // Single-thumb mode fills from the track's left edge; range mode fills
+        // between the two thumbs.
+        let fillStart = lowerEnabled ? xPosition(for: lower, width: width) : 0
+        let fillEnd = xPosition(for: upper, width: width)
         return ZStack(alignment: .leading) {
             Capsule()
                 .fill(Color.secondary.opacity(0.25))
                 .frame(height: trackHeight)
             Capsule()
                 .fill(Color.accentColor)
-                .frame(width: max(upperX - lowerX, 0), height: trackHeight)
-                .offset(x: lowerX)
+                .frame(width: max(fillEnd - fillStart, 0), height: trackHeight)
+                .offset(x: fillStart)
         }
         .frame(height: thumbSize + 8, alignment: .center)
     }
