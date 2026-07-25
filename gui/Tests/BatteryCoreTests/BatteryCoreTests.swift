@@ -257,9 +257,9 @@ final class LaunchdManagerTests: XCTestCase {
 
     func testPlistXMLContainsKeyElements() {
         let task = ScheduledTask(id: taskID, name: "p", action: .maintain, param: "80", schedule: .daily, hour: 9, minute: 0)
-        let xml = LaunchdManager.plistXML(for: task, helperPath: "/Applications/BatteryGUI.app/Contents/MacOS/battery-gui-helper")
-        XCTAssertTrue(xml.contains("com.battery.gui.task.\(taskID.uuidString.lowercased())"))
-        XCTAssertTrue(xml.contains("battery-gui-helper"))
+        let xml = LaunchdManager.plistXML(for: task, helperPath: "/Applications/BatteryKeeper.app/Contents/MacOS/battery-keeper-helper")
+        XCTAssertTrue(xml.contains("com.battery.keeper.task.\(taskID.uuidString.lowercased())"))
+        XCTAssertTrue(xml.contains("battery-keeper-helper"))
         XCTAssertTrue(xml.contains("--task"))
         XCTAssertTrue(xml.contains(taskID.uuidString))
         XCTAssertTrue(xml.contains("StartCalendarInterval"))
@@ -267,7 +267,7 @@ final class LaunchdManagerTests: XCTestCase {
     }
 
     func testLabelFormat() {
-        XCTAssertEqual(LaunchdManager.label(for: taskID), "com.battery.gui.task.\(taskID.uuidString.lowercased())")
+        XCTAssertEqual(LaunchdManager.label(for: taskID), "com.battery.keeper.task.\(taskID.uuidString.lowercased())")
     }
 }
 

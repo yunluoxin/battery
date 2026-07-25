@@ -9,7 +9,7 @@ struct SchedulesView: View {
     @State private var showingEditor = false
 
     private var helperPath: String {
-        Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/battery-gui-helper").path
+        Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/battery-keeper-helper").path
     }
 
     var body: some View {

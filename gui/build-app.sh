@@ -1,11 +1,11 @@
 #!/bin/bash
-# Build BatteryGUI.app from the SwiftPM package.
+# Build BatteryKeeper.app from the SwiftPM package.
 # Usage: ./build-app.sh [output-dir]   (default: ./build)
 set -euo pipefail
 cd "$(dirname "$0")"
 
 OUT_DIR="${1:-build}"
-APP_NAME="BatteryGUI"
+APP_NAME="BatteryKeeper"
 APP_DIR="$OUT_DIR/$APP_NAME.app"
 
 echo "🔨 Building release binaries…"
@@ -18,7 +18,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
 cp "$BIN_DIR/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
-cp "$BIN_DIR/battery-gui-helper" "$APP_DIR/Contents/MacOS/battery-gui-helper"
+cp "$BIN_DIR/battery-keeper-helper" "$APP_DIR/Contents/MacOS/battery-keeper-helper"
 
 cat > "$APP_DIR/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -28,9 +28,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundleDisplayName</key>
-    <string>Battery GUI</string>
+    <string>BatteryKeeper</string>
     <key>CFBundleIdentifier</key>
-    <string>co.palokaj.battery.gui</string>
+    <string>co.palokaj.batterykeeper</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>

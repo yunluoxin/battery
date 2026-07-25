@@ -1,6 +1,6 @@
 import Foundation
 
-/// A scheduled task stored in ~/.battery-gui/tasks.json
+/// A scheduled task stored in ~/.battery-keeper/tasks.json
 public struct ScheduledTask: Codable, Equatable, Identifiable, Sendable {
     public enum Action: String, Codable, CaseIterable, Sendable {
         case maintain        // set charge limit (param = "80" or "70-80")

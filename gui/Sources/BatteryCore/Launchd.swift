@@ -1,10 +1,10 @@
 import Foundation
 
 /// Manages per-task launchd agents:
-/// ~/Library/LaunchAgents/com.battery.gui.task.<id>.plist
+/// ~/Library/LaunchAgents/com.battery.keeper.task.<id>.plist
 public enum LaunchdManager {
     public static func label(for taskID: UUID) -> String {
-        "com.battery.gui.task.\(taskID.uuidString.lowercased())"
+        "com.battery.keeper.task.\(taskID.uuidString.lowercased())"
     }
 
     public static func plistURL(for taskID: UUID) -> URL {

@@ -1,7 +1,7 @@
 import Foundation
 import BatteryCore
 
-/// battery-gui-helper --task <uuid>
+/// battery-keeper-helper --task <uuid>
 /// Invoked by launchd at scheduled times. Executes the task's action via the
 /// battery CLI, appends to history.json, and updates the task's lastRun/lastResult.
 /// Runs headless and exits.
@@ -19,7 +19,7 @@ while let arg = argIterator.next() {
         taskID = UUID(uuidString: value)
     }
 }
-guard let taskID else { fail("usage: battery-gui-helper --task <uuid>", code: 2) }
+guard let taskID else { fail("usage: battery-keeper-helper --task <uuid>", code: 2) }
 
 // Advisory lock so two helpers don't run concurrently.
 try? StateDirectory.ensureExists()

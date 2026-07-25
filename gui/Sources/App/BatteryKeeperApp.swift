@@ -2,7 +2,7 @@ import SwiftUI
 import BatteryCore
 
 @main
-struct BatteryGUIApp: App {
+struct BatteryKeeperApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var state = AppState.shared
 

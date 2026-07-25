@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "BatteryGUI",
+    name: "BatteryKeeper",
     platforms: [.macOS(.v14)],
     targets: [
         .target(
@@ -10,12 +10,12 @@ let package = Package(
             path: "Sources/BatteryCore"
         ),
         .executableTarget(
-            name: "battery-gui-helper",
+            name: "battery-keeper-helper",
             dependencies: ["BatteryCore"],
             path: "Sources/Helper"
         ),
         .executableTarget(
-            name: "BatteryGUI",
+            name: "BatteryKeeper",
             dependencies: ["BatteryCore"],
             path: "Sources/App"
         ),

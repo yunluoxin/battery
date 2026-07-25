@@ -137,7 +137,7 @@ public enum PostCompletionBehavior: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// User preferences persisted in ~/.battery-gui/config.json
+/// User preferences persisted in ~/.battery-keeper/config.json
 public struct AppConfig: Codable, Sendable {
     public var maintainEnabled: Bool = false
     public var maintainRange: MaintainRange = .init(single: 80)
@@ -157,7 +157,15 @@ public struct AppConfig: Codable, Sendable {
 /// App-level state directory. Keeps GUI state separate from the CLI's ~/.battery.
 public enum StateDirectory {
     public static let url: URL = {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".battery-gui")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let current = home.appendingPathComponent(".battery-keeper")
+        let legacy = home.appendingPathComponent(".battery-gui")
+        // Migrate state from the pre-rename directory once.
+        if !FileManager.default.fileExists(atPath: current.path),
+           FileManager.default.fileExists(atPath: legacy.path) {
+            try? FileManager.default.moveItem(at: legacy, to: current)
+        }
+        return current
     }()
 
     public static var tasksFile: URL { url.appendingPathComponent("tasks.json") }

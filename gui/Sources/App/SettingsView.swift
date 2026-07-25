@@ -111,7 +111,7 @@ private struct AboutSettingsView: View {
             Image(systemName: "battery.100.bolt")
                 .font(.system(size: 44))
                 .foregroundStyle(.green)
-            Text("Battery GUI")
+            Text("BatteryKeeper")
                 .font(.title2)
             Text("A menu bar charge limiter wrapping the battery CLI.")
                 .font(.callout)
