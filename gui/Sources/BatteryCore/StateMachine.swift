@@ -43,7 +43,7 @@ public enum CompletionHandler {
         switch config.postCompletion {
         case .resumeMaintain:
             if config.maintainEnabled {
-                _ = try await cli.maintain(config.maintainRange)
+                _ = try await cli.maintain(config.effectiveRange)
             } else {
                 try await restoreDefault(cli: cli)
             }

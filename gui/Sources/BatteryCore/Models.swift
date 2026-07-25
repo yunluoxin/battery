@@ -152,6 +152,12 @@ public struct AppConfig: Codable, Sendable {
     public var showPercentageInMenuBar: Bool = false
 
     public init() {}
+
+    /// The range sent to the CLI: the full sailing band when sailing is on,
+    /// otherwise just the upper limit.
+    public var effectiveRange: MaintainRange {
+        sailingEnabled ? maintainRange : MaintainRange(single: maintainRange.upper)
+    }
 }
 
 /// App-level state directory. Keeps GUI state separate from the CLI's ~/.battery.

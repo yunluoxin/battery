@@ -27,7 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Agent app: no dock icon, and closing windows must not quit the app.
         NSApp.setActivationPolicy(.accessory)
-        NSApp.windows.forEach { $0.isReleasedWhenClosed = false }
+        // Close any window the Settings/Window scenes restored on launch so
+        // the app starts as a bare menu bar item. The status item's window is
+        // never in NSApp.windows at this point, so this is safe here (unlike
+        // the async variant, which ran after it was added and disabled it).
+        NSApp.windows.forEach { window in
+            if window.isVisible { window.close() }
+        }
         guard isAppleSilicon() else {
             let alert = NSAlert()
             alert.messageText = "Unsupported Mac"

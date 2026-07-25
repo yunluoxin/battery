@@ -138,7 +138,17 @@ struct PopoverView: View {
 
             Toggle("Sailing Mode", isOn: Binding(
                 get: { state.config.sailingEnabled },
-                set: { state.setSailing(enabled: $0) }
+                set: { newValue in
+                    state.setSailing(enabled: newValue)
+                    // Enabling sailing restores the stored band to the thumbs;
+                    // disabling it pins the (hidden) lower thumb to the upper
+                    // so the next enable starts from a sensible band.
+                    if newValue {
+                        sliderLower = Double(state.config.maintainRange.lower)
+                    } else {
+                        sliderLower = sliderUpper
+                    }
+                }
             ))
             .toggleStyle(.switch)
             .disabled(!state.cliAvailable || state.mode == .calibrating)
@@ -152,9 +162,12 @@ struct PopoverView: View {
     }
 
     private func applyRange() {
-        let range = state.config.sailingEnabled
-            ? MaintainRange.clamped(lower: Int(sliderLower), upper: Int(sliderUpper))
-            : MaintainRange(single: Int(sliderUpper))
+        // Persist the full band the user has set. When sailing is off the
+        // lower thumb is hidden, but keep the stored lower value so toggling
+        // sailing back on restores the previous band instead of collapsing
+        // to a single point.
+        let newLower = state.config.sailingEnabled ? Int(sliderLower) : state.config.maintainRange.lower
+        let range = MaintainRange.clamped(lower: newLower, upper: Int(sliderUpper))
         if range != state.config.maintainRange {
             state.setMaintainRange(range)
         }

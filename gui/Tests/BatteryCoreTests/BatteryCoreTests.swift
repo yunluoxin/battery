@@ -153,6 +153,40 @@ final class MaintainRangeTests: XCTestCase {
     }
 }
 
+final class EffectiveRangeTests: XCTestCase {
+    func testSailingOnUsesFullBand() {
+        var config = AppConfig()
+        config.sailingEnabled = true
+        config.maintainRange = MaintainRange(lower: 70, upper: 80)
+        XCTAssertEqual(config.effectiveRange, MaintainRange(lower: 70, upper: 80))
+    }
+
+    func testSailingOffCollapsesToUpper() {
+        var config = AppConfig()
+        config.sailingEnabled = false
+        config.maintainRange = MaintainRange(lower: 70, upper: 80)
+        XCTAssertEqual(config.effectiveRange, MaintainRange(single: 80))
+    }
+
+    /// Regression: the stored band must survive sailing off→on. Previously
+    /// disabling sailing overwrote maintainRange with a single value, so
+    /// re-enabling (or restarting) showed 70%–70%.
+    func testStoredBandSurvivesSailingToggle() {
+        var config = AppConfig()
+        config.sailingEnabled = true
+        config.maintainRange = MaintainRange(lower: 70, upper: 80)
+
+        config.sailingEnabled = false
+        // effectiveRange collapses for the CLI…
+        XCTAssertEqual(config.effectiveRange, MaintainRange(single: 80))
+        // …but the stored band is untouched.
+        XCTAssertEqual(config.maintainRange, MaintainRange(lower: 70, upper: 80))
+
+        config.sailingEnabled = true
+        XCTAssertEqual(config.effectiveRange, MaintainRange(lower: 70, upper: 80))
+    }
+}
+
 final class ModeDeriverTests: XCTestCase {
     private func status(pct: Int, charging: Bool = false, discharging: Bool = false) -> BatteryStatus {
         BatteryStatus(percentage: pct, remainingTime: "", charging: charging, discharging: discharging, maintain: nil)

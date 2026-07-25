@@ -121,7 +121,7 @@ final class AppState: ObservableObject {
         Task {
             do {
                 if enabled {
-                    _ = try await cli.maintain(config.maintainRange)
+                    _ = try await cli.maintain(config.effectiveRange)
                 } else {
                     _ = try await cli.maintainStop()
                 }
@@ -136,7 +136,7 @@ final class AppState: ObservableObject {
         guard config.maintainEnabled else { return }
         Task {
             do {
-                _ = try await cli.maintain(range)
+                _ = try await cli.maintain(config.effectiveRange)
                 await refreshAsync()
             } catch { show(error) }
         }
@@ -144,13 +144,13 @@ final class AppState: ObservableObject {
 
     func setSailing(enabled: Bool) {
         config.sailingEnabled = enabled
-        if !enabled {
-            // Collapse range to single limit at upper value.
-            config.maintainRange = MaintainRange(single: config.maintainRange.upper)
-        }
+        // Never mutate maintainRange here: the stored range is the user's
+        // sailing band and must survive toggling sailing off and on again.
+        // Non-sailing mode simply uses the range's upper value (see
+        // config.effectiveRange).
         saveConfig()
         guard config.maintainEnabled else { return }
-        setMaintainRange(config.maintainRange)
+        setMaintainRange(config.effectiveRange)
     }
 
     /// Toggle the shared charge/discharge switchers. They are mutually exclusive.
