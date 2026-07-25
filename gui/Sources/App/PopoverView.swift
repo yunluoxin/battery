@@ -172,10 +172,9 @@ struct PopoverView: View {
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            Slider(value: $target, in: 20...100, step: 5) { editing in
-                if !editing { state.setTarget(Int(target)) }
-            }
-            .disabled(!state.cliAvailable || state.mode == .calibrating)
+            StyledSlider(value: $target)
+                .disabled(!state.cliAvailable || state.mode == .calibrating)
+                .onChange(of: target) { _, _ in state.setTarget(Int(target)) }
 
             Toggle("Charge (Top Up)", isOn: Binding(
                 get: { state.config.chargeActive },

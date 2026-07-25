@@ -1,5 +1,15 @@
 import SwiftUI
 
+/// Single-thumb slider sharing the RangeSlider visual style.
+struct StyledSlider: View {
+    @Binding var value: Double
+    var range: ClosedRange<Double> = 20...100
+
+    var body: some View {
+        RangeSlider(lower: .constant(range.lowerBound), upper: $value, range: range, lowerEnabled: false)
+    }
+}
+
 /// Two-thumb range slider over a percentage domain.
 /// When `lowerEnabled` is false, only the upper thumb is interactive and the
 /// lower thumb is pinned to the upper value.
@@ -50,7 +60,7 @@ struct RangeSlider: View {
 
     private func lowerThumb(width: CGFloat) -> some View {
         thumb(value: $lower, constrainedTo: range.lowerBound...upper, width: width)
-            .opacity(lowerEnabled ? 1 : 0.3)
+            .opacity(lowerEnabled ? 1 : 0)
             .allowsHitTesting(lowerEnabled)
     }
 
