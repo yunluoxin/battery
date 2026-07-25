@@ -45,6 +45,33 @@ public enum BatteryStatusParser {
             maintain: (maintain?.isEmpty == false) ? maintain : nil
         )
     }
+
+    /// Parse the Low Power Mode state from full `pmset -g` output.
+    /// Line-by-line parsing: regex anchors (^/$) do not reliably match
+    /// mid-string lines in `String.range(of:options:.regularExpression)`,
+    /// which made an earlier regex-based implementation always return false.
+    public static func parseLowPowerMode(pmsetOutput: String) -> Bool {
+        for line in pmsetOutput.components(separatedBy: "\n") where line.contains("lowpowermode") {
+            let fields = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            if fields.last == "1" { return true }
+        }
+        return false
+    }
+
+    /// Extract the integer value of a top-level `"Key" = N;` property from
+    /// `ioreg -rn AppleSmartBattery` output. Nested occurrences (e.g. inside
+    /// "BatteryData" = {...}) use `"Key"=N` without spaces around `=`, so
+    /// requiring `" = ` avoids matching them.
+    public static func parseIORegInt(_ key: String, from output: String) -> Int? {
+        let needle = "\"\(key)\" = "
+        for line in output.components(separatedBy: "\n") {
+            guard let range = line.range(of: needle) else { continue }
+            let value = line[range.upperBound...]
+                .prefix(while: { $0.isNumber })
+            if let int = Int(value) { return int }
+        }
+        return nil
+    }
 }
 
 /// Charge limit, optionally a sailing range.

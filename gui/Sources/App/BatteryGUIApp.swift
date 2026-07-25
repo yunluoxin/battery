@@ -25,8 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusBar: StatusBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Agent app: no dock icon.
+        // Agent app: no dock icon, and closing windows must not quit the app.
         NSApp.setActivationPolicy(.accessory)
+        NSApp.windows.forEach { $0.isReleasedWhenClosed = false }
         guard isAppleSilicon() else {
             let alert = NSAlert()
             alert.messageText = "Unsupported Mac"
@@ -42,6 +43,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppState.shared.stop()
+    }
+
+    /// The menu bar app is long-running: closing the Settings or Schedules
+    /// window must never quit it; only the explicit Quit action does.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     private func isAppleSilicon() -> Bool {

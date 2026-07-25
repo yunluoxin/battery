@@ -48,6 +48,78 @@ final class BatteryStatusParserTests: XCTestCase {
     }
 }
 
+final class LowPowerModeParserTests: XCTestCase {
+    /// Realistic `pmset -g` output shape (multi-line).
+    private func pmsetOutput(lowPower: Int) -> String {
+        """
+        System-wide power settings:
+         SleepDisabled\t\t0
+        Currently in use:
+         standby              1
+         Sleep On Power Button 1
+         hibernatefile        /var/vm/sleepimage
+         powernap             1
+         lowpowermode         \(lowPower)
+         hibernatemode        3
+         ttyskeepawake        1
+
+        """
+    }
+
+    func testLowPowerOn() {
+        XCTAssertTrue(BatteryStatusParser.parseLowPowerMode(pmsetOutput: pmsetOutput(lowPower: 1)))
+    }
+
+    func testLowPowerOff() {
+        XCTAssertFalse(BatteryStatusParser.parseLowPowerMode(pmsetOutput: pmsetOutput(lowPower: 0)))
+    }
+
+    func testLowPowerMissingKey() {
+        let out = "Currently in use:\n standby              1\n sleep                1\n"
+        XCTAssertFalse(BatteryStatusParser.parseLowPowerMode(pmsetOutput: out))
+    }
+
+    func testLowPowerEmptyOutput() {
+        XCTAssertFalse(BatteryStatusParser.parseLowPowerMode(pmsetOutput: ""))
+    }
+
+    /// The line must be found even when it's not the first line — this is the
+    /// regression the regex-based implementation had (^ didn't match mid-string).
+    func testLowPowerNotFirstLine() {
+        let out = "Currently in use:\n standby 1\n lowpowermode 1\n hibernatemode 3\n"
+        XCTAssertTrue(BatteryStatusParser.parseLowPowerMode(pmsetOutput: out))
+    }
+}
+
+final class IORegParserTests: XCTestCase {
+    /// Mirrors real `ioreg -rn AppleSmartBattery`: top-level keys use
+    /// `"Key" = N;` while nested BatteryData keys use `"Key"=N`.
+    private let sample = """
+      "BatteryData" = {"Temperature"=9999,"CycleCount"=9999,"MaxCapacity"=9999,"Voltage"=12326}
+      "DesignCycleCount9C" = 1000
+      "MaxCapacity" = 100
+      "Temperature" = 3083
+      "CycleCount" = 53
+
+    """
+
+    func testParsesTopLevelKeys() {
+        XCTAssertEqual(BatteryStatusParser.parseIORegInt("Temperature", from: sample), 3083)
+        XCTAssertEqual(BatteryStatusParser.parseIORegInt("CycleCount", from: sample), 53)
+        XCTAssertEqual(BatteryStatusParser.parseIORegInt("MaxCapacity", from: sample), 100)
+    }
+
+    func testDoesNotMatchNestedKeys() {
+        // Nested BatteryData values (9999) must not win over top-level ones.
+        let nestedOnly = "  \"BatteryData\" = {\"Temperature\"=9999}\n"
+        XCTAssertNil(BatteryStatusParser.parseIORegInt("Temperature", from: nestedOnly))
+    }
+
+    func testMissingKey() {
+        XCTAssertNil(BatteryStatusParser.parseIORegInt("Nonexistent", from: sample))
+    }
+}
+
 final class MaintainRangeTests: XCTestCase {
     func testSingleValue() {
         let r = MaintainRange(single: 80)

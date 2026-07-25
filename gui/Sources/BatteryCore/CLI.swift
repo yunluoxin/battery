@@ -108,8 +108,9 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
 
     /// Read Low Power Mode straight from pmset (user-space, no sudo needed).
     /// The CLI sets it with `-a` (all power sources), so the merged `pmset -g`
-    /// view is authoritative.
-    private static func readLowPowerState() -> Bool {
+    /// view is authoritative. Public so the app can query it on launch before
+    /// the first full battery status is available.
+    public static func readLowPowerState() -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
         process.arguments = ["-g"]
@@ -119,7 +120,7 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
         guard (try? process.run()) != nil else { return false }
         process.waitUntilExit()
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return out.range(of: #"^\s*lowpowermode\s+1"#, options: .regularExpression) != nil
+        return BatteryStatusParser.parseLowPowerMode(pmsetOutput: out)
     }
 
     public func run(_ arguments: [String]) async throws -> CLIResult {

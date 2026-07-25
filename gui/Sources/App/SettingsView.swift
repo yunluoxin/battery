@@ -87,9 +87,9 @@ private struct BatterySettingsView: View {
             guard let _ = try? process.run() else { return }
             process.waitUntilExit()
             let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            let temp = Self.extract(#""Temperature" = (\d+)"#, from: output).flatMap(Int.init).map { String(format: "%.1f°C", Double($0) / 100.0) }
-            let cycles = Self.extract(#""CycleCount" = (\d+)"#, from: output)
-            let maxCap = Self.extract(#""MaxCapacity" = (\d+)"#, from: output)
+            let temp = BatteryStatusParser.parseIORegInt("Temperature", from: output).map { String(format: "%.1f°C", Double($0) / 100.0) }
+            let cycles = BatteryStatusParser.parseIORegInt("CycleCount", from: output).map(String.init)
+            let maxCap = BatteryStatusParser.parseIORegInt("MaxCapacity", from: output).map(String.init)
             let parts = [
                 temp.map { "Temp \($0)" },
                 cycles.map { "Cycles \($0)" },
@@ -99,13 +99,6 @@ private struct BatterySettingsView: View {
                 batteryInfo = parts.isEmpty ? "Unavailable" : parts.joined(separator: " · ")
             }
         }
-    }
-
-    nonisolated private static func extract(_ pattern: String, from text: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text) else { return nil }
-        return String(text[range])
     }
 }
 

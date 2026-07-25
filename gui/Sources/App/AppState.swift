@@ -29,6 +29,9 @@ final class AppState: ObservableObject {
         self.cli = cli
         self.config = JSONStore.load(AppConfig.self, from: StateDirectory.configFile, default: AppConfig())
         self.cliAvailable = (cli as? ProcessBatteryCLI)?.cliExists ?? true
+        // Seed the low-power state immediately so the menu bar badge and the
+        // toggle are correct before the first full status poll completes.
+        self.lowPowerOn = ProcessBatteryCLI.readLowPowerState()
     }
 
     /// The low-power state shown in the UI: always the real system state.
