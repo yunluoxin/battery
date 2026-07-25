@@ -20,9 +20,6 @@ final class AppState: ObservableObject {
 
     let cli: BatteryCLI
     private var pollTask: Task<Void, Never>?
-    /// Non-nil once the user has interacted with the low-power toggle in the
-    /// popover; until then the toggle mirrors the CLI/system state.
-    private var lowPowerOverride: Bool?
     /// Grace timestamp: a freshly started charge/discharge cycle is not
     /// evaluated for completion until this passes. Prevents the race where the
     /// first poll after toggling still sees the pre-cycle percentage.
@@ -34,9 +31,9 @@ final class AppState: ObservableObject {
         self.cliAvailable = (cli as? ProcessBatteryCLI)?.cliExists ?? true
     }
 
-    /// The low-power state shown in the UI: user intent if set, else system.
+    /// The low-power state shown in the UI: always the real system state.
     var effectiveLowPower: Bool {
-        lowPowerOverride ?? lowPowerOn
+        lowPowerOn
     }
 
     // MARK: Lifecycle
@@ -75,11 +72,9 @@ final class AppState: ObservableObject {
             status = newStatus
             calibrating = CalibrationTracker.detectRunningCalibration() != nil
 
-            // Sync low-power state from the CLI unless the user just toggled
-            // it locally (override wins until the next deliberate change).
-            if lowPowerOverride == nil {
-                lowPowerOn = newStatus.lowPowerOn
-            }
+            // Always mirror the real system low-power state; pmset is the
+            // single source of truth.
+            lowPowerOn = newStatus.lowPowerOn
 
             // Detect completion of an active charge/discharge cycle. A grace
             // period after starting avoids the race where the first poll still
@@ -210,8 +205,7 @@ final class AppState: ObservableObject {
     }
 
     func setLowPower(_ on: Bool) {
-        // Optimistic update: reflect intent immediately, reconcile on failure.
-        lowPowerOverride = on
+        // Optimistic update; the next refresh re-reads the real system state.
         lowPowerOn = on
         Task {
             do {
@@ -220,9 +214,6 @@ final class AppState: ObservableObject {
                 await refreshAsync()    // revert to actual system state
                 show(error)
             }
-            // Keep the override: low-power state is independent of charge /
-            // discharge / maintain cycles, so later refreshes (which run after
-            // those actions) must not snap the toggle back to the system value.
         }
     }
 

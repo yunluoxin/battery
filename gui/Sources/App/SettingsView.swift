@@ -28,6 +28,14 @@ private struct GeneralSettingsView: View {
                 set: { state.setLaunchAtLogin($0) }
             ))
 
+            Toggle("Show battery percentage in menu bar", isOn: Binding(
+                get: { state.config.showPercentageInMenuBar },
+                set: {
+                    state.config.showPercentageInMenuBar = $0
+                    state.saveConfig()
+                }
+            ))
+
             Picker("After Charge/Discharge completes:", selection: Binding(
                 get: { state.config.postCompletion },
                 set: {

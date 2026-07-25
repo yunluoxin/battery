@@ -31,10 +31,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         }
 
         // Update the icon when relevant state changes.
-        Publishers.CombineLatest3(state.$mode, state.$lowPowerOn, state.$status)
+        Publishers.CombineLatest4(state.$mode, state.$lowPowerOn, state.$status, state.$config)
             .receive(on: RunLoop.main)
-            .sink { [weak self] mode, lowPower, status in
-                self?.updateIcon(mode: mode, lowPower: lowPower, status: status)
+            .sink { [weak self] mode, lowPower, status, config in
+                self?.updateIcon(mode: mode, lowPower: lowPower, status: status, showPercentage: config.showPercentageInMenuBar)
             }
             .store(in: &cancellables)
     }
@@ -61,7 +61,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
 
     // MARK: Icon
 
-    private func updateIcon(mode: OperatingMode, lowPower: Bool, status: BatteryStatus?) {
+    private func updateIcon(mode: OperatingMode, lowPower: Bool, status: BatteryStatus?, showPercentage: Bool) {
         let symbol: String = switch mode {
         case .idle:
             status.map { "battery.\(Self.batteryLevel($0.percentage))" } ?? "battery.100"
@@ -82,9 +82,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         } else {
             statusItem.button?.image = image
         }
-        if let pct = status?.percentage {
-            statusItem.button?.title = " \(pct)%"
-        }
+        statusItem.button?.title = showPercentage ? (status.map { " \($0.percentage)%" } ?? "") : ""
     }
 
     private static func batteryLevel(_ pct: Int) -> Int {

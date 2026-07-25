@@ -121,6 +121,8 @@ public struct AppConfig: Codable, Sendable {
     public var dischargeActive: Bool = false
     public var postCompletion: PostCompletionBehavior = .resumeMaintain
     public var launchAtLogin: Bool = false
+    /// Show the battery percentage next to the menu bar icon.
+    public var showPercentageInMenuBar: Bool = false
 
     public init() {}
 }
