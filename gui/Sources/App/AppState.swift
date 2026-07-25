@@ -166,6 +166,11 @@ final class AppState: ObservableObject {
         Task {
             do {
                 if active {
+                    // `battery charge` runs maintain-stop internally, but only
+                    // kills the daemon named in the pidfile; an orphaned daemon
+                    // (stale/empty pidfile) survives and keeps forcing charging
+                    // off, defeating the cycle. Sweep all maintain daemons first.
+                    _ = try await cli.maintainStop()
                     _ = try await cli.charge(to: config.chargeTarget)
                 } else {
                     // Manual cancel: restore according to post-completion policy.
@@ -188,6 +193,8 @@ final class AppState: ObservableObject {
         Task {
             do {
                 if active {
+                    // See setCharge: sweep orphaned maintain daemons first.
+                    _ = try await cli.maintainStop()
                     _ = try await cli.discharge(to: config.dischargeTarget)
                 } else {
                     try await CompletionHandler.handleCompletion(config: config, cli: cli)
