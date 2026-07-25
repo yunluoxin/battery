@@ -76,8 +76,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         }
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Battery")
         if lowPower, let base = image {
-            // Badge low power mode with a small leaf.
-            let config = NSImage.SymbolConfiguration(paletteColors: [.systemGreen])
+            // Tint yellow like the system's Low Power Mode battery icon.
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemYellow])
             statusItem.button?.image = base.withSymbolConfiguration(config) ?? base
         } else {
             statusItem.button?.image = image
