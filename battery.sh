@@ -4,7 +4,7 @@
 ## Update management
 ## variables are used by this binary as well at the update script
 ## ###############
-BATTERY_CLI_VERSION="v1.3.4"
+BATTERY_CLI_VERSION="v1.3.5"
 
 # If a script may run as root:
 #   - Reset PATH to safe defaults at the very beginning of the script.
@@ -162,6 +162,10 @@ ALL ALL = NOPASSWD: CHARGING_ON
 ALL ALL = NOPASSWD: FORCE_DISCHARGE_OFF
 ALL ALL = NOPASSWD: FORCE_DISCHARGE_ON
 ALL ALL = NOPASSWD: LED_CONTROL
+
+# Allow passwordless Low Power Mode toggling (battery power only, -b)
+Cmnd_Alias    LOW_POWER_MODE = /usr/bin/pmset -b lowpowermode 1, /usr/bin/pmset -b lowpowermode 0
+ALL ALL = NOPASSWD: LOW_POWER_MODE
 
 # Temporarily keep passwordless SMC reading commands so the old menubar GUI versions don't ask for password on each launch
 # trying to execute 'battery visudo'. There is no harm in removing this, so do it as soon as you believe users are no
