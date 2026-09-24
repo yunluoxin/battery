@@ -6,7 +6,6 @@ struct SchedulesView: View {
     @State private var taskList: TaskList = TaskList()
     @State private var history: History = History()
     @State private var editingTask: ScheduledTask?
-    @State private var showingEditor = false
 
     private var helperPath: String {
         Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/battery-keeper-helper").path
@@ -72,11 +71,9 @@ struct SchedulesView: View {
             }
         }
         .frame(minWidth: 520, minHeight: 380)
-        .sheet(isPresented: $showingEditor) {
-            if let editingTask {
-                TaskEditorView(task: editingTask) { saved in
-                    save(saved)
-                }
+        .sheet(item: $editingTask) { task in
+            TaskEditorView(task: task) { saved in
+                save(saved)
             }
         }
         .onAppear(perform: reload)
@@ -103,12 +100,10 @@ struct SchedulesView: View {
             minute: 0,
             weekdays: [2]
         )
-        showingEditor = true
     }
 
     private func edit(_ task: ScheduledTask) {
         editingTask = task
-        showingEditor = true
     }
 
     private func save(_ task: ScheduledTask) {
