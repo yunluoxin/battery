@@ -3,19 +3,27 @@ import BatteryCore
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
+    @State private var selection: SettingsTab = .general
 
     var body: some View {
-        TabView {
+        TabView(selection: $selection) {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gear") }
+                .tag(SettingsTab.general)
             BatterySettingsView()
                 .tabItem { Label("Battery", systemImage: "battery.100") }
+                .tag(SettingsTab.battery)
             AboutSettingsView()
                 .tabItem { Label("About", systemImage: "info.circle") }
+                .tag(SettingsTab.about)
         }
         .frame(width: 440, height: 300)
         .environmentObject(state)
     }
+}
+
+private enum SettingsTab: Hashable {
+    case general, battery, about
 }
 
 private struct GeneralSettingsView: View {
