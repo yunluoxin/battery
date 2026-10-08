@@ -187,6 +187,41 @@ final class EffectiveRangeTests: XCTestCase {
     }
 }
 
+final class AppConfigDecodingTests: XCTestCase {
+    /// Regression: a config.json written before a preference existed is missing
+    /// that key. The synthesised decoder throws on a missing key, which made
+    /// `JSONStore.load` fall back to defaults and silently reset every other
+    /// preference the user had set.
+    func testMissingKeysFallBackWithoutLosingStoredValues() throws {
+        let json = """
+        { "maintainEnabled": true, "maintainRange": { "lower": 60, "upper": 70 }, "sailingEnabled": true }
+        """
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+        XCTAssertTrue(config.maintainEnabled)
+        XCTAssertTrue(config.sailingEnabled)
+        XCTAssertEqual(config.maintainRange, MaintainRange(lower: 60, upper: 70))
+        // Absent keys take the declared default.
+        XCTAssertEqual(config.chargeTarget, 100)
+        XCTAssertEqual(config.postCompletion, .resumeMaintain)
+        XCTAssertTrue(config.showPercentageInMenuBar)
+    }
+
+    func testRoundTripKeepsEveryPreference() throws {
+        var original = AppConfig()
+        original.maintainEnabled = true
+        original.maintainRange = MaintainRange(lower: 60, upper: 70)
+        original.sailingEnabled = true
+        original.chargeTarget = 95
+        original.dischargeTarget = 40
+        original.launchAtLogin = true
+        original.showPercentageInMenuBar = false
+        original.postCompletion = .restoreDefault
+
+        let data = try JSONEncoder().encode(original)
+        XCTAssertEqual(try JSONDecoder().decode(AppConfig.self, from: data), original)
+    }
+}
+
 final class ModeDeriverTests: XCTestCase {
     private func status(pct: Int, charging: Bool = false, discharging: Bool = false) -> BatteryStatus {
         BatteryStatus(percentage: pct, remainingTime: "", charging: charging, discharging: discharging, maintain: nil)

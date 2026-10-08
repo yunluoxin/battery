@@ -138,7 +138,7 @@ public enum PostCompletionBehavior: String, Codable, CaseIterable, Sendable {
 }
 
 /// User preferences persisted in ~/.battery-keeper/config.json
-public struct AppConfig: Codable, Sendable {
+public struct AppConfig: Codable, Equatable, Sendable {
     public var maintainEnabled: Bool = false
     public var maintainRange: MaintainRange = .init(single: 80)
     public var sailingEnabled: Bool = false
@@ -149,9 +149,29 @@ public struct AppConfig: Codable, Sendable {
     public var postCompletion: PostCompletionBehavior = .resumeMaintain
     public var launchAtLogin: Bool = false
     /// Show the battery percentage next to the menu bar icon.
-    public var showPercentageInMenuBar: Bool = false
+    public var showPercentageInMenuBar: Bool = true
 
     public init() {}
+
+    /// Tolerant decoding: a config written by an older build is missing newer
+    /// keys, and the synthesised decoder throws on a missing key, which would
+    /// silently reset *every* preference back to the defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func get<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            (try? c.decode(T.self, forKey: key)) ?? fallback
+        }
+        maintainEnabled = get(.maintainEnabled, false)
+        maintainRange = get(.maintainRange, .init(single: 80))
+        sailingEnabled = get(.sailingEnabled, false)
+        chargeTarget = get(.chargeTarget, 100)
+        dischargeTarget = get(.dischargeTarget, 80)
+        chargeActive = get(.chargeActive, false)
+        dischargeActive = get(.dischargeActive, false)
+        postCompletion = get(.postCompletion, .resumeMaintain)
+        launchAtLogin = get(.launchAtLogin, false)
+        showPercentageInMenuBar = get(.showPercentageInMenuBar, true)
+    }
 
     /// The range sent to the CLI: the full sailing band when sailing is on,
     /// otherwise just the upper limit.
