@@ -14,10 +14,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private var eventMonitor: Any?
     /// Everything the current icon encodes, so an unchanged poll is a no-op.
     private var renderedKey: IconKey?
-    /// The inputs behind `renderedKey`, replayed when something outside the
-    /// observed state (the menu bar appearance) forces a repaint.
-    private var lastRenderInput: RenderInput?
-    private var appearanceObservation: NSKeyValueObservation?
+    /// The last icon built by the lazy drawing handler, keyed by everything
+    /// that goes into it.
+    private var iconCache: (style: IconStyle, image: NSImage)?
 
     init(state: AppState) {
         self.state = state
@@ -43,21 +42,6 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
                 self?.updateIcon(mode: mode, lowPower: lowPower, status: status, showPercentage: config.showPercentageInMenuBar)
             }
             .store(in: &cancellables)
-
-        // The icon is drawn in explicit black/white rather than as a template
-        // image, because a charging bolt has to contrast with the fill it sits
-        // on. Redraw when the menu bar flips between light and dark.
-        appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
-            // KVO does not promise a thread, and the status item is main-actor
-            // only, so hop explicitly instead of assuming isolation.
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, let input = self.lastRenderInput else { return }
-                    self.renderedKey = nil
-                    self.updateIcon(mode: input.mode, lowPower: input.lowPower, status: input.status, showPercentage: input.showPercentage)
-                }
-            }
-        }
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
@@ -93,27 +77,26 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         let level: Int          // 0/25/50/75/100, -1 when status is unknown
         let charging: Bool
         let lowPower: Bool
-        let darkMenuBar: Bool
         let percentage: Int      // only meaningful when showPercentage is on
         let showPercentage: Bool
     }
 
-    private struct RenderInput {
-        let mode: OperatingMode
-        let lowPower: Bool
-        let status: BatteryStatus?
-        let showPercentage: Bool
+    /// Everything that goes into the pixels of one icon build. `dark` is not
+    /// known when the status item is configured — see `statusImage`.
+    private struct IconStyle: Equatable {
+        let level: Int
+        let charging: Bool
+        let tinted: Bool
+        let dark: Bool
     }
 
     private func updateIcon(mode: OperatingMode, lowPower: Bool, status: BatteryStatus?, showPercentage: Bool) {
-        lastRenderInput = RenderInput(mode: mode, lowPower: lowPower, status: status, showPercentage: showPercentage)
         let percentage = status?.percentage
         let key = IconKey(
             calibrating: mode == .calibrating,
             level: percentage.map(StatusIcon.level(for:)) ?? -1,
             charging: Self.isCharging(mode: mode, status: status),
             lowPower: lowPower,
-            darkMenuBar: Self.isDarkMenuBar,
             percentage: showPercentage ? (percentage ?? -1) : -1,
             showPercentage: showPercentage
         )
@@ -126,12 +109,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         if key.calibrating {
             image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "Battery calibrating")
         } else if key.level >= 0 {
-            image = StatusIcon.image(
-                level: key.level,
-                charging: key.charging,
-                dark: key.darkMenuBar,
-                tint: lowPower ? .systemYellow : nil
-            )
+            image = statusImage(level: key.level, charging: key.charging, tint: lowPower ? .systemYellow : nil)
         } else {
             image = NSImage(systemSymbolName: "battery.100", accessibilityDescription: "Battery")
         }
@@ -139,8 +117,31 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         statusItem.button?.title = showPercentage ? (percentage.map { " \($0)%" } ?? "") : ""
     }
 
-    private static var isDarkMenuBar: Bool {
-        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    /// The icon is drawn in explicit black/white rather than as a template
+    /// image, because a charging bolt has to contrast with the fill it sits
+    /// on — so AppKit cannot pick the colour for us.
+    ///
+    /// That makes the menu bar's appearance an input, and the menu bar follows
+    /// the display it is on, not the app: with an external display driving it,
+    /// `NSApp.effectiveAppearance` disagrees with how the bar actually renders
+    /// and the icon comes out black on a dark bar. So the appearance is
+    /// resolved here, at draw time, where AppKit has already set the context
+    /// for the right display — the icon rebuilds itself on the next redraw if
+    /// the appearance has changed since.
+    private func statusImage(level: Int, charging: Bool, tint: NSColor?) -> NSImage? {
+        NSImage(size: StatusIcon.canvasSize, flipped: false) { [weak self] rect in
+            MainActor.assumeIsolated {
+                guard let self else { return false }
+                let dark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                let style = IconStyle(level: level, charging: charging, tinted: tint != nil, dark: dark)
+                if self.iconCache?.style != style,
+                   let built = StatusIcon.image(level: level, charging: charging, dark: dark, tint: tint) {
+                    self.iconCache = (style, built)
+                }
+                self.iconCache?.image.draw(in: rect)
+                return true
+            }
+        }
     }
 
     /// Whether the pack is taking charge right now. In idle and maintain mode

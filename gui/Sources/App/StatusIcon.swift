@@ -23,6 +23,11 @@ enum StatusIcon {
     /// cost nothing.
     private static let scale: CGFloat = 4
 
+    /// The battery glyph's natural size. The status item needs a canvas size up
+    /// front to attach a drawing handler to, and the icon must never be
+    /// stretched away from this.
+    static let canvasSize = CGSize(width: 22, height: 11)
+
     /// The five fill buckets the system battery icon uses.
     static func level(for percentage: Int) -> Int {
         switch percentage {
