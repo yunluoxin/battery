@@ -5,7 +5,7 @@
 # Usage:
 #   ./build.sh                 build the .app into ./build
 #   ./build.sh --dmg           also build BatteryKeeper-<version>-arm64.dmg
-#   ./build.sh --install       install the built .app (quit the running copy first)
+#   ./build.sh --install       install the built .app (relaunching it if it was running)
 #   ./build.sh --dmg --install build, package and install
 #   ./build.sh --all           --dmg --install, then reopen the installed app
 #   ./build.sh --dry-run       with --install: report the target, change nothing
@@ -168,23 +168,41 @@ other_install_dir() {
   echo "none"
 }
 
+# Set to true by quit_running_app when it actually terminated a live copy, so
+# the caller knows whether restoring the previous state means relaunching.
+APP_WAS_RUNNING=false
+
 # Quiesce the running copy so we never swap files underneath a live process.
+# Returns 0 whether or not anything was running.
 quit_running_app() {
+  APP_WAS_RUNNING=false
   if ! pgrep -qx "$APP_NAME"; then
     return 0
   fi
   if $DRY_RUN; then
     echo "   (dry run) would quit the running $APP_NAME"
+    APP_WAS_RUNNING=true
     return 0
   fi
   echo "🛑 Quitting running ${APP_NAME}…"
+  APP_WAS_RUNNING=true
   osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
   for _ in {1..30}; do
     pgrep -qx "$APP_NAME" || return 0
     sleep 0.2
   done
   pkill -x "$APP_NAME" 2>/dev/null || true
-  sleep 0.5
+  # pkill is async: give it a moment, and confirm it actually took effect so we
+  # never claim to have quit something still holding the old bundle open.
+  for _ in {1..20}; do
+    pgrep -qx "$APP_NAME" || break
+    sleep 0.1
+  done
+  if pgrep -qx "$APP_NAME"; then
+    echo "❌ $APP_NAME is still running and holds the old copy open."
+    echo "   Quit it from the menu bar, then re-run this script."
+    exit 1
+  fi
 }
 
 # SMAppService registers the app by absolute path, so moving the app leaves the
@@ -238,9 +256,16 @@ if $DO_INSTALL; then
 
   warn_if_login_item_stale "$TARGET" "$(other_install_dir "$INSTALL_DIR")"
   echo "✅ Installed: $TARGET"
+
+  # Restore the state we found: if the app was running, it should be running
+  # again, now against the new bundle. --all forces it on regardless.
+  if $DO_REOPEN || $APP_WAS_RUNNING; then
+    echo "🚀 Relaunching $TARGET"
+    open "$TARGET"
+  fi
 fi
 
-if $DO_REOPEN; then
+if $DO_REOPEN && ! $DO_INSTALL; then
   INSTALL_DIR="$(detect_install_dir)"
   echo "🚀 Launching $INSTALL_DIR/$APP_NAME.app"
   open "$INSTALL_DIR/$APP_NAME.app"
