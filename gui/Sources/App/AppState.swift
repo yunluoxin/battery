@@ -134,10 +134,26 @@ final class AppState: ObservableObject {
         }
     }
 
-    private var activeCycle: OperatingMode? {
-        if config.chargeActive { return .chargingTo(config.chargeTarget) }
-        if config.dischargeActive { return .dischargingTo(config.dischargeTarget) }
+    /// The cycle currently under way, if any. Charge and discharge share one
+    /// CLI switcher, so at most one of them is ever active.
+    var activeCycleKind: BatteryCycle? {
+        if config.chargeActive { return .charge }
+        if config.dischargeActive { return .discharge }
         return nil
+    }
+
+    /// The level the popover's single target slider shows and edits: the level
+    /// of the running cycle, or the charge level while nothing is running.
+    var cycleTarget: Int {
+        config.target(for: activeCycleKind ?? .charge)
+    }
+
+    private var activeCycle: OperatingMode? {
+        switch activeCycleKind {
+        case .charge: .chargingTo(config.chargeTarget)
+        case .discharge: .dischargingTo(config.dischargeTarget)
+        case nil: nil
+        }
     }
 
     // MARK: Config persistence
@@ -191,10 +207,15 @@ final class AppState: ObservableObject {
         config.chargeActive = active
         if active {
             config.dischargeActive = false
+            // Switching this toggle on *is* the intent "top the battery up", so
+            // the target snaps to the charge level instead of keeping whatever
+            // level the discharge cycle left behind.
+            config.setTarget(BatteryCycle.charge.defaultTarget, for: .charge)
             cycleStartedAt = Date()
         } else {
             cycleStartedAt = nil
         }
+        let level = config.chargeTarget
         saveConfig()
         Task {
             do {
@@ -204,7 +225,7 @@ final class AppState: ObservableObject {
                     // (stale/empty pidfile) survives and keeps forcing charging
                     // off, defeating the cycle. Sweep all maintain daemons first.
                     _ = try await cli.maintainStop()
-                    _ = try await cli.charge(to: config.chargeTarget)
+                    _ = try await cli.charge(to: level)
                 } else {
                     // Manual cancel: restore according to post-completion policy.
                     try await CompletionHandler.handleCompletion(config: config, cli: cli)
@@ -218,17 +239,21 @@ final class AppState: ObservableObject {
         config.dischargeActive = active
         if active {
             config.chargeActive = false
+            // See setCharge: the toggle carries the intent, so discharge takes
+            // its own level rather than the charge cycle's 100%.
+            config.setTarget(BatteryCycle.discharge.defaultTarget, for: .discharge)
             cycleStartedAt = Date()
         } else {
             cycleStartedAt = nil
         }
+        let level = config.dischargeTarget
         saveConfig()
         Task {
             do {
                 if active {
                     // See setCharge: sweep orphaned maintain daemons first.
                     _ = try await cli.maintainStop()
-                    _ = try await cli.discharge(to: config.dischargeTarget)
+                    _ = try await cli.discharge(to: level)
                 } else {
                     try await CompletionHandler.handleCompletion(config: config, cli: cli)
                 }
@@ -237,9 +262,21 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Update the level the popover's single target slider edits.
+    ///
+    /// It belongs to the running cycle; with no cycle running there is no owner,
+    /// so both cycles take the value — whichever toggle is switched on next
+    /// snaps to its own default anyway.
     func setTarget(_ value: Int) {
-        config.chargeTarget = value
-        config.dischargeTarget = value
+        switch activeCycleKind {
+        case .charge:
+            config.setTarget(value, for: .charge)
+        case .discharge:
+            config.setTarget(value, for: .discharge)
+        case nil:
+            config.setTarget(value, for: .charge)
+            config.setTarget(value, for: .discharge)
+        }
         saveConfig()
     }
 

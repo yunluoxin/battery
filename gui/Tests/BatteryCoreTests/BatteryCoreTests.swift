@@ -220,6 +220,24 @@ final class AppConfigDecodingTests: XCTestCase {
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode(AppConfig.self, from: data), original)
     }
+
+    /// Each cycle owns its level: topping up runs to 100, discharging stops
+    /// well below it, and switching one cycle's level leaves the other alone.
+    func testCycleTargetsAreIndependent() {
+        var config = AppConfig()
+        XCTAssertEqual(config.target(for: .charge), 100)
+        XCTAssertEqual(config.target(for: .discharge), 40)
+
+        config.setTarget(60, for: .discharge)
+        XCTAssertEqual(config.target(for: .discharge), 60)
+        XCTAssertEqual(config.target(for: .charge), 100)
+
+        // Snapping back is what switching the toggle on does.
+        config.setTarget(BatteryCycle.charge.defaultTarget, for: .charge)
+        config.setTarget(BatteryCycle.discharge.defaultTarget, for: .discharge)
+        XCTAssertEqual(config.chargeTarget, 100)
+        XCTAssertEqual(config.dischargeTarget, 40)
+    }
 }
 
 final class ModeDeriverTests: XCTestCase {

@@ -8,7 +8,6 @@ struct PopoverView: View {
 
     @State private var sliderLower: Double = 80
     @State private var sliderUpper: Double = 80
-    @State private var target: Double = 90
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -181,13 +180,18 @@ struct PopoverView: View {
                 Text("Target")
                     .font(.headline)
                 Spacer()
-                Text("\(Int(target))%")
+                Text("\(state.cycleTarget)%")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            StyledSlider(value: $target)
+            // Bound to the store rather than a local @State: switching a cycle
+            // on moves the target (charge → 100%, discharge → 40%) and the
+            // slider has to follow without waiting for the popover to reopen.
+            StyledSlider(value: Binding(
+                get: { Double(state.cycleTarget) },
+                set: { state.setTarget(Int($0)) }
+            ))
                 .disabled(!state.cliAvailable || state.mode == .calibrating)
-                .onChange(of: target) { _, _ in state.setTarget(Int(target)) }
 
             Toggle("Charge (Top Up)", isOn: Binding(
                 get: { state.config.chargeActive },
@@ -269,6 +273,5 @@ struct PopoverView: View {
         let range = state.config.maintainRange
         sliderLower = Double(range.lower)
         sliderUpper = Double(range.upper)
-        target = Double(max(state.config.chargeTarget, state.config.dischargeTarget))
     }
 }

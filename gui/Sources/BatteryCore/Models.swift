@@ -114,6 +114,27 @@ public struct MaintainRange: Equatable, Codable, Sendable {
     }
 }
 
+/// The two charge/discharge cycles the GUI drives through one switcher and one
+/// target slider.
+///
+/// They are mutually exclusive, but each keeps its own level: switching a
+/// toggle on means "do this cycle", not "run the level the other cycle was
+/// left on".
+public enum BatteryCycle: String, CaseIterable, Sendable {
+    case charge
+    case discharge
+
+    /// Level the cycle runs to when its toggle is switched on. Topping up means
+    /// a full battery; discharging is only worth starting from below full, so
+    /// its target stops well short of 100.
+    public var defaultTarget: Int {
+        switch self {
+        case .charge: 100
+        case .discharge: 40
+        }
+    }
+}
+
 /// What the GUI believes is the active operating mode.
 /// Derived from user intent (config) + observed CLI status.
 public enum OperatingMode: Equatable, Sendable {
@@ -142,8 +163,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var maintainEnabled: Bool = false
     public var maintainRange: MaintainRange = .init(single: 80)
     public var sailingEnabled: Bool = false
-    public var chargeTarget: Int = 100
-    public var dischargeTarget: Int = 80
+    public var chargeTarget: Int = BatteryCycle.charge.defaultTarget
+    public var dischargeTarget: Int = BatteryCycle.discharge.defaultTarget
     public var chargeActive: Bool = false
     public var dischargeActive: Bool = false
     public var postCompletion: PostCompletionBehavior = .resumeMaintain
@@ -164,8 +185,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
         maintainEnabled = get(.maintainEnabled, false)
         maintainRange = get(.maintainRange, .init(single: 80))
         sailingEnabled = get(.sailingEnabled, false)
-        chargeTarget = get(.chargeTarget, 100)
-        dischargeTarget = get(.dischargeTarget, 80)
+        chargeTarget = get(.chargeTarget, BatteryCycle.charge.defaultTarget)
+        dischargeTarget = get(.dischargeTarget, BatteryCycle.discharge.defaultTarget)
         chargeActive = get(.chargeActive, false)
         dischargeActive = get(.dischargeActive, false)
         postCompletion = get(.postCompletion, .resumeMaintain)
@@ -177,6 +198,22 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// otherwise just the upper limit.
     public var effectiveRange: MaintainRange {
         sailingEnabled ? maintainRange : MaintainRange(single: maintainRange.upper)
+    }
+
+    /// The level stored for one cycle.
+    public func target(for cycle: BatteryCycle) -> Int {
+        switch cycle {
+        case .charge: chargeTarget
+        case .discharge: dischargeTarget
+        }
+    }
+
+    /// Store a level for one cycle, leaving the other cycle's level alone.
+    public mutating func setTarget(_ value: Int, for cycle: BatteryCycle) {
+        switch cycle {
+        case .charge: chargeTarget = value
+        case .discharge: dischargeTarget = value
+        }
     }
 }
 
