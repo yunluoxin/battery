@@ -9,24 +9,59 @@ import AppKit
 ///
 /// Charging is drawn by compositing a bolt over the level symbol: SF Symbols
 /// only ships `battery.100.bolt`, there is no `battery.50.bolt`. The bolt is
-/// drawn in the contrasting colour where it crosses the fill, which is how the
-/// system draws its own charging battery.
+/// punched out of the battery rather than painted on top of it — the fill and
+/// the outline are cleared around it and the bolt itself is drawn solid, which
+/// is how the system's own charging battery is drawn. Painting it on top meant
+/// the part of the bolt over the fill had to be flipped to the background
+/// colour to stay visible, which read as a blob rather than a bolt.
 ///
 /// The pixels are composited by hand rather than with `CGContext` blend modes
 /// or `NSImage.draw(operation:)`; both of those silently degrade to plain
 /// source-over when the source is a template image, which washed the icon out.
 enum StatusIcon {
     /// Rasterisation scale, oversampling past the 2× the menu bar needs. The
-    /// bolt is only ~4×5pt, so at 2× its edges are visibly stepped; rendering
-    /// at 4× and letting AppKit downscale keeps them smooth. The icon is only
-    /// rebuilt when the level, mode or appearance changes, so the extra pixels
-    /// cost nothing.
+    /// bolt and the gap around it are only a handful of points across, so at 2×
+    /// their edges are visibly stepped; rendering at 4× and letting AppKit
+    /// downscale keeps them smooth. The icon is only rebuilt when the level,
+    /// mode or appearance changes, so the extra pixels cost nothing.
     private static let scale: CGFloat = 4
 
     /// The battery glyph's natural size. The status item needs a canvas size up
     /// front to attach a drawing handler to, and the icon must never be
     /// stretched away from this.
     static let canvasSize = CGSize(width: 22, height: 11)
+
+    /// The charging bolt's shape as the system draws it: 6pt across for every
+    /// 9pt of battery height. It is scaled off the measured body rather than
+    /// given a fixed size, so it stays flush with the top and bottom strokes —
+    /// and keeps doing so if Apple revises the symbol.
+    private static let boltAspect: CGFloat = 6.0 / 9.0
+
+    /// How much of the battery is cleared around the bolt. Without it the bolt
+    /// merges into the fill block it crosses and stops reading as a bolt.
+    private static let boltClearance: CGFloat = 0.75
+
+    /// Apple's charging bolt, drawn in a 16 × 24 box with y running down, traced
+    /// off the system's menu bar icon. SF Symbols has no symbol for it: `bolt.fill`
+    /// is a different and heavier bolt, and the real one only ever shows up as the
+    /// hole punched out of `battery.100.bolt` — which arrives already merged with
+    /// the clearance around it, and carrying no level of its own.
+    private static var boltPath: CGPath {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 10, y: 0))
+        path.addLine(to: CGPoint(x: 12, y: 0))   // tip
+        path.addLine(to: CGPoint(x: 9, y: 9))
+        path.addLine(to: CGPoint(x: 16, y: 10))  // right wing of the waist
+        path.addLine(to: CGPoint(x: 14, y: 13))
+        path.addLine(to: CGPoint(x: 6, y: 24))   // down to the tail
+        path.addLine(to: CGPoint(x: 4, y: 24))
+        path.addLine(to: CGPoint(x: 7, y: 14))
+        path.addLine(to: CGPoint(x: 0, y: 13))   // left wing of the waist
+        path.addLine(to: CGPoint(x: 0, y: 12))
+        path.addLine(to: CGPoint(x: 2, y: 10))
+        path.closeSubpath()
+        return path
+    }
 
     /// The five fill buckets the system battery icon uses.
     static func level(for percentage: Int) -> Int {
@@ -53,34 +88,98 @@ enum StatusIcon {
         // stretching it into a square canvas distorts the outline.
         let size = base.size
         let bounds = CGRect(origin: .zero, size: size)
-        guard let baseAlpha = alphaMap(base, canvas: size, rect: bounds) else { return nil }
+        guard let baseAlpha = alphaMap(base, canvas: size, rect: bounds),
+              let outline = bodyBox(baseAlpha, canvas: size) else { return nil }
 
         var boltAlpha: [UInt8]?
-        if charging, let bolt = symbol("bolt.fill", nil) {
-            let height = size.height * 0.55
-            let width = height * bolt.size.width / bolt.size.height
-            // The right ~15% of the battery symbol is the terminal nub rather
-            // than body, so the bolt sits left of the geometric centre.
-            let rect = CGRect(x: size.width * 0.44 - width / 2, y: (size.height - height) / 2, width: width, height: height)
-            boltAlpha = alphaMap(bolt, canvas: size, rect: rect)
+        if charging {
+            // Centred on the body, not on the canvas: the terminal nub takes the
+            // right third, so the canvas centre would push the bolt off to the
+            // right of where the system puts it.
+            let height = outline.height
+            let width = height * boltAspect
+            let rect = CGRect(x: outline.midX - width / 2, y: outline.minY, width: width, height: height)
+            boltAlpha = pathAlpha(boltPath, canvas: size, rect: rect, from: CGSize(width: 16, height: 24))
         }
 
         let body: RGB = tint.map { rgb($0) } ?? (dark ? (255, 255, 255) : (0, 0, 0))
-        let accent: RGB = dark ? (0, 0, 0) : (255, 255, 255)
-        return compose(canvas: size, base: baseAlpha, bolt: boltAlpha, body: body, accent: accent)
+        return compose(canvas: size, base: baseAlpha, bolt: boltAlpha, color: body)
     }
 
     // MARK: - Compositing
 
+    /// The battery body in points, with the terminal nub excluded.
+    ///
+    /// The nub is the only part of the symbol that is not joined to the body —
+    /// there is a clear column between the two — so walking in from the left and
+    /// stopping at the first empty column lands exactly on the body's right
+    /// edge. Measuring it beats hard-coding the 22×11 artwork's insets, which
+    /// change whenever Apple revises the symbol.
+    private static func bodyBox(_ alpha: [UInt8], canvas: CGSize) -> CGRect? {
+        let width = Int(canvas.width * scale), height = Int(canvas.height * scale)
+        // The half-covered contour is the artwork's real edge; anything paler
+        // than that is antialiasing, and testing for mere presence would let it
+        // bridge the gap between the body and the nub.
+        let edge: UInt8 = 128
+        var minX = -1, maxX = -1, minY = height, maxY = -1
+        for x in 0..<width {
+            var occupied = false
+            for y in 0..<height where alpha[y * width + x] > edge {
+                occupied = true
+                minY = min(minY, y)
+                maxY = max(maxY, y)
+            }
+            guard occupied else {
+                if minX >= 0 { break }   // the gap before the nub
+                continue
+            }
+            if minX < 0 { minX = x }
+            maxX = x
+        }
+        guard minX >= 0, maxX >= minX else { return nil }
+        // The bitmap stores its first row at the top while the context's origin
+        // is bottom-left, so the row range has to be flipped back into points.
+        let bottom = canvas.height - CGFloat(maxY + 1) / scale
+        let top = canvas.height - CGFloat(minY) / scale
+        return CGRect(x: CGFloat(minX) / scale, y: bottom,
+                      width: CGFloat(maxX - minX + 1) / scale,
+                      height: top - bottom)
+    }
+
     /// Alpha channel of `image` drawn into `rect` on a `canvas`-sized grid.
     private static func alphaMap(_ image: NSImage, canvas: CGSize, rect: CGRect) -> [UInt8]? {
+        guard let cg = bitmap(image) else { return nil }
+        return alphaGrid(canvas: canvas) { ctx in
+            ctx.draw(cg, in: rect)
+        }
+    }
+
+    /// Alpha channel of `path` — authored in a `from`-sized box with y running
+    /// down — placed into `rect` on a `canvas`-sized grid.
+    private static func pathAlpha(_ path: CGPath, canvas: CGSize, rect: CGRect, from size: CGSize) -> [UInt8]? {
+        alphaGrid(canvas: canvas) { ctx in
+            // The grid's origin is bottom-left and the path is authored top-down,
+            // so the placement mirrors y and anchors to the rect's top edge.
+            var place = CGAffineTransform(
+                scaleX: rect.width / size.width,
+                y: -rect.height / size.height
+            )
+            place = place.concatenating(CGAffineTransform(translationX: rect.minX, y: rect.maxY))
+            ctx.concatenate(place)
+            ctx.addPath(path)
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.fillPath()
+        }
+    }
+
+    /// Runs `draw` on a cleared, oversampled grid and lifts its alpha channel out.
+    private static func alphaGrid(canvas: CGSize, _ draw: (CGContext) -> Void) -> [UInt8]? {
         let width = Int(canvas.width * scale), height = Int(canvas.height * scale)
-        guard let ctx = context(width: width, height: height),
-              let cg = bitmap(image) else { return nil }
+        guard let ctx = context(width: width, height: height) else { return nil }
         ctx.clear(CGRect(x: 0, y: 0, width: width, height: height))
         ctx.interpolationQuality = .high
         ctx.scaleBy(x: scale, y: scale)
-        ctx.draw(cg, in: rect)
+        draw(ctx)
 
         let bytes = ctx.data?.bindMemory(to: UInt8.self, capacity: width * height * 4)
         var alpha = [UInt8](repeating: 0, count: width * height)
@@ -89,23 +188,25 @@ enum StatusIcon {
         return alpha
     }
 
-    /// Battery body in `body`, charging bolt in `body` over the empty interior
-    /// and in `accent` where it sits on the fill.
-    private static func compose(canvas: CGSize, base: [UInt8], bolt: [UInt8]?, body: RGB, accent: RGB) -> NSImage? {
+    /// Battery body in `color`, charging bolt punched through it: the battery is
+    /// cleared within `boltClearance` of the bolt, then the bolt is drawn back
+    /// in the same colour.
+    private static func compose(canvas: CGSize, base: [UInt8], bolt: [UInt8]?, color: RGB) -> NSImage? {
         let width = Int(canvas.width * scale), height = Int(canvas.height * scale)
         guard let ctx = context(width: width, height: height),
               let bytes = ctx.data?.bindMemory(to: UInt8.self, capacity: width * height * 4)
         else { return nil }
         ctx.clear(CGRect(x: 0, y: 0, width: width, height: height))
 
+        let clearance = bolt.map { dilate($0, width: width, height: height, radius: boltClearance) }
         for i in 0..<(width * height) {
-            let under = Int(base[i])
-            var alpha = under
-            var color = body
-            if let bolt, bolt[i] > 0 {
-                let over = Int(bolt[i])
-                alpha = under + over * (255 - under) / 255
-                color = under > 0 ? accent : body
+            var alpha = Int(base[i])
+            if let bolt, let clearance {
+                // Carve first, then fill the bolt back in. Doing it in this order
+                // keeps the bolt's own edge at full strength — the clearance
+                // never eats into it.
+                alpha = alpha * (255 - Int(clearance[i])) / 255
+                alpha += Int(bolt[i]) * (255 - alpha) / 255
             }
             guard alpha > 0 else { continue }
             // Premultiplied RGBA.
@@ -123,6 +224,33 @@ enum StatusIcon {
         let image = NSImage(size: canvas)
         image.addRepresentation(rep)
         return image
+    }
+
+    /// Grows `alpha` by `radius` points on every side — the clearance the
+    /// charging bolt needs around itself. Separable, so a box this big costs
+    /// two linear passes rather than one per neighbour.
+    private static func dilate(_ alpha: [UInt8], width: Int, height: Int, radius: CGFloat) -> [UInt8] {
+        let r = max(1, Int((radius * scale).rounded()))
+        var out = alpha
+        // Horizontal, into a scratch buffer, then vertical back into `out`.
+        var scratch = [UInt8](repeating: 0, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                var best: UInt8 = 0
+                let lo = max(0, x - r), hi = min(width - 1, x + r)
+                for nx in lo...hi { best = max(best, alpha[y * width + nx]) }
+                scratch[y * width + x] = best
+            }
+        }
+        for y in 0..<height {
+            for x in 0..<width {
+                var best: UInt8 = 0
+                let lo = max(0, y - r), hi = min(height - 1, y + r)
+                for ny in lo...hi { best = max(best, scratch[ny * width + x]) }
+                out[y * width + x] = best
+            }
+        }
+        return out
     }
 
     // MARK: - Helpers

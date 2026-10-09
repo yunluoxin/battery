@@ -118,8 +118,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     /// The icon is drawn in explicit black/white rather than as a template
-    /// image, because a charging bolt has to contrast with the fill it sits
-    /// on — so AppKit cannot pick the colour for us.
+    /// image: a charging bolt has to be punched out of the fill it crosses,
+    /// and the Low Power tint is a colour AppKit would otherwise pick — so the
+    /// colour has to be decided here.
     ///
     /// That makes the menu bar's appearance an input, and the menu bar follows
     /// the display it is on, not the app: with an external display driving it,
