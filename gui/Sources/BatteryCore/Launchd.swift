@@ -90,6 +90,65 @@ public enum LaunchdManager {
         }
     }
 
+    /// Where the helper lives inside the running app. Single definition on
+    /// purpose: this path is what gets baked into every launchd agent, so a
+    /// second copy of the expression would eventually drift and produce agents
+    /// that the self-repair below cannot match.
+    public static var currentHelperPath: String {
+        Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/battery-keeper-helper")
+            .path
+    }
+
+    /// The helper path baked into an installed agent, or nil when there is no
+    /// plist to read. The path is absolute, so moving or re-installing the app
+    /// anywhere else leaves every scheduled task pointing at a file that is no
+    /// longer there.
+    public static func installedHelperPath(taskID: UUID) -> String? {
+        guard let data = try? Data(contentsOf: plistURL(for: taskID)),
+              let plist = try? PropertyListSerialization.propertyList(
+                from: data, options: [], format: nil) as? [String: Any],
+              let args = plist["ProgramArguments"] as? [String],
+              let first = args.first
+        else { return nil }
+        return first
+    }
+
+    /// Whether a recorded helper path has fallen out of date. Pure, and the
+    /// only place the comparison lives, so the "did the app move" decision can
+    /// be tested against paths no test ever writes to disk.
+    ///
+    /// Compared verbatim rather than by resolving symlinks or normalising: the
+    /// path launchd will exec is the literal string in the plist, so a string
+    /// difference is exactly the condition worth repairing.
+    public static func helperPathChanged(installed: String?, current: String) -> Bool {
+        guard let installed else { return false }   // nothing installed yet
+        return installed != current
+    }
+
+    /// Whether an installed agent for this task still points at the helper.
+    public static func needsReinstall(taskID: UUID, currentHelperPath: String) -> Bool {
+        helperPathChanged(installed: installedHelperPath(taskID: taskID), current: currentHelperPath)
+    }
+
+    /// Reinstall every enabled task whose agent points at a stale helper path.
+    /// Returns the tasks that were repaired, so the caller can log or surface
+    /// what moved. Silent on failure by design: a task that cannot be
+    /// re-registered shows up in History rather than interrupting startup.
+    @discardableResult
+    public static func reinstallMovedTasks(tasks: [ScheduledTask], helperPath: String) -> [ScheduledTask] {
+        var repaired: [ScheduledTask] = []
+        for task in tasks where task.enabled && needsReinstall(taskID: task.id, currentHelperPath: helperPath) {
+            do {
+                try install(task: task, helperPath: helperPath)
+                repaired.append(task)
+            } catch {
+                continue
+            }
+        }
+        return repaired
+    }
+
     private static var guiDomain: String { "gui/\(getuid())" }
 
     @discardableResult

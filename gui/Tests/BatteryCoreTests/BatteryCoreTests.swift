@@ -435,3 +435,73 @@ final class CompletionHandlerTests: XCTestCase {
         XCTAssertEqual(calls, [["maintain", "stop"], ["charging", "on"], ["adapter", "on"]])
     }
 }
+
+/// The app bakes its own absolute path into every launchd agent, so moving or
+/// re-installing it elsewhere leaves scheduled tasks pointing at a helper that
+/// no longer exists. These cover the detection half of the self-repair that
+/// runs at launch.
+final class LaunchdHelperPathTests: XCTestCase {
+
+    // MARK: Staleness comparison
+
+    func testUnchangedPathNeedsNoReinstall() {
+        XCTAssertFalse(LaunchdManager.helperPathChanged(
+            installed: "/Applications/BatteryKeeper.app/Contents/MacOS/battery-keeper-helper",
+            current: "/Applications/BatteryKeeper.app/Contents/MacOS/battery-keeper-helper"))
+    }
+
+    func testMovedAppNeedsReinstall() {
+        XCTAssertTrue(LaunchdManager.helperPathChanged(
+            installed: "/Users/east/Applications/BatteryKeeper.app/Contents/MacOS/battery-keeper-helper",
+            current: "/Applications/BatteryKeeper.app/Contents/MacOS/battery-keeper-helper"))
+    }
+
+    func testMissingPlistNeedsNoReinstall() {
+        // Nothing installed means nothing to repair — a first run must not
+        // bootstrap agents for tasks the user never enabled a schedule on.
+        XCTAssertFalse(LaunchdManager.helperPathChanged(installed: nil, current: "/Applications/x/helper"))
+    }
+
+    func testTrailingSlashDifferenceCountsAsMoved() {
+        // launchd execs the literal string, so a slash difference is a real
+        // difference rather than a cosmetic one.
+        XCTAssertTrue(LaunchdManager.helperPathChanged(installed: "/Applications/app/helper/", current: "/Applications/app/helper"))
+    }
+
+    func testPathWithSpacesSurvivesComparison() {
+        XCTAssertTrue(LaunchdManager.helperPathChanged(
+            installed: "/Applications/My Apps/BatteryKeeper.app/Contents/MacOS/battery-keeper-helper",
+            current: "/Applications/BatteryKeeper.app/Contents/MacOS/battery-keeper-helper"))
+    }
+
+    // MARK: Writer/reader round trip
+
+    func testGeneratedXMLReadsBackTheHelperPath() throws {
+        // Guards the assumption the whole self-heal rests on: the plist this
+        // file writes is parseable, and ProgramArguments[0] really is the path.
+        let task = ScheduledTask(name: "T", action: .maintain, param: "80",
+                                 schedule: .daily, hour: 9, minute: 0, weekdays: [])
+        let helper = "/Applications/BatteryKeeper.app/Contents/MacOS/battery-keeper-helper"
+        let xml = LaunchdManager.plistXML(for: task, helperPath: helper)
+
+        let data = Data(xml.utf8)
+        let plist = try XCTUnwrap(
+            try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any])
+        let args = try XCTUnwrap(plist["ProgramArguments"] as? [String])
+        XCTAssertEqual(args.first, helper)
+    }
+
+    func testHelperPathIsNotConfusedBySiblingArguments() throws {
+        // The reader takes ProgramArguments[0]; --task and the id follow it, so
+        // a reader that grabbed the wrong element would compare against "on".
+        let task = ScheduledTask(name: "T", action: .maintain, param: "80",
+                                 schedule: .daily, hour: 9, minute: 0, weekdays: [])
+        let helper = "/opt/battery/Contents/MacOS/battery-keeper-helper"
+        let data = Data(LaunchdManager.plistXML(for: task, helperPath: helper).utf8)
+        let plist = try XCTUnwrap(
+            try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any])
+        let args = try XCTUnwrap(plist["ProgramArguments"] as? [String])
+        XCTAssertEqual(args.count, 3)
+        XCTAssertEqual(args, [helper, "--task", task.id.uuidString])
+    }
+}

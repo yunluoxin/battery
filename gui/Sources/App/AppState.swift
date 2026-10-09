@@ -42,12 +42,45 @@ final class AppState: ObservableObject {
     // MARK: Lifecycle
 
     func start() {
+        repairAfterMove()
         refresh()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 guard !Task.isCancelled else { break }
                 self?.refresh()
+            }
+        }
+    }
+
+    /// Re-point anything that stored the app's absolute path after the app was
+    /// moved or re-installed elsewhere.
+    ///
+    /// Both mechanisms below record where the app *was*, and neither follows it:
+    /// launchd agents name the helper by absolute path, and SMAppService stores
+    /// the registered bundle location. Moving the app therefore breaks both
+    /// silently — scheduled tasks stop firing and the login item launches
+    /// nothing. Repairing at startup beats asking the user to go toggle
+    /// switches, since moving an app is a thing people do casually.
+    private func repairAfterMove() {
+        let tasks = JSONStore.load(TaskList.self, from: StateDirectory.tasksFile, default: TaskList())
+        let repaired = LaunchdManager.reinstallMovedTasks(tasks: tasks.tasks, helperPath: LaunchdManager.currentHelperPath)
+        if !repaired.isEmpty {
+            print("[BatteryKeeper] re-registered \(repaired.count) scheduled task(s) after the app moved")
+        }
+
+        // Only ever re-register when the user asked to launch at login in the
+        // first place: a stale registration is not evidence the feature is
+        // wanted, and re-registering unconditionally would turn on a behaviour
+        // the user may have switched off. The toggle is the record of intent.
+        guard config.launchAtLogin else { return }
+        let registered = SMAppService.mainApp.status
+        if registered == .notFound || registered == .notRegistered {
+            do {
+                try SMAppService.mainApp.register()
+                print("[BatteryKeeper] re-registered launch at login after the app moved")
+            } catch {
+                print("[BatteryKeeper] could not re-register launch at login: \(error)")
             }
         }
     }

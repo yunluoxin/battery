@@ -7,9 +7,7 @@ struct SchedulesView: View {
     @State private var history: History = History()
     @State private var editingTask: ScheduledTask?
 
-    private var helperPath: String {
-        Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/battery-keeper-helper").path
-    }
+    private var helperPath: String { LaunchdManager.currentHelperPath }
 
     var body: some View {
         VStack(spacing: 0) {
