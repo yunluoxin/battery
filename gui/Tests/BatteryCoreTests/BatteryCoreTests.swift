@@ -91,6 +91,49 @@ final class LowPowerModeParserTests: XCTestCase {
     }
 }
 
+final class AdapterParserTests: XCTestCase {
+    /// Real `pmset -g batt` output on AC: the pack is full (or held by a
+    /// maintain band) and taking no charge, which is the plug-not-bolt case.
+    private let onAC = """
+    Now drawing from 'AC Power'
+     -InternalBattery-0 (id=7209059)\t71%; AC attached; not charging present: true
+
+    """
+
+    func testAdapterAttached() {
+        XCTAssertTrue(BatteryStatusParser.parseAdapterAttached(pmsetOutput: onAC))
+    }
+
+    func testOnBatteryPower() {
+        let out = "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=7209059)\t71%; discharging; 4:11 remaining present: true\n"
+        XCTAssertFalse(BatteryStatusParser.parseAdapterAttached(pmsetOutput: out))
+    }
+
+    /// The header line alone is enough — older pmset builds do not append
+    /// "AC attached" to the battery line.
+    func testHeaderOnlyCounts() {
+        XCTAssertTrue(BatteryStatusParser.parseAdapterAttached(pmsetOutput: "Now drawing from 'AC Power'\n"))
+    }
+
+    /// Unknown stays unknown: no adapter is claimed when pmset says nothing,
+    /// so a failed read can never invent a plug on a battery-powered Mac.
+    func testEmptyOutput() {
+        XCTAssertFalse(BatteryStatusParser.parseAdapterAttached(pmsetOutput: ""))
+    }
+
+    /// The menu bar draws the plug from this combination, not from either flag
+    /// alone: a full pack on AC and a pack merely sitting idle both report
+    /// charging=false, discharging=false.
+    func testPluggedInNotCharging() throws {
+        var status = try BatteryStatusParser.parseCSV("100,0:00,disabled,not discharging,")
+        XCTAssertFalse(status.pluggedInNotCharging)   // adapter unknown
+        status.adapterAttached = true
+        XCTAssertTrue(status.pluggedInNotCharging)
+        status.charging = true
+        XCTAssertFalse(status.pluggedInNotCharging)
+    }
+}
+
 final class IORegParserTests: XCTestCase {
     /// Mirrors real `ioreg -rn AppleSmartBattery`: top-level keys use
     /// `"Key" = N;` while nested BatteryData keys use `"Key"=N`.

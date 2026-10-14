@@ -103,6 +103,7 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
         }
         var parsed = try BatteryStatusParser.parseCSV(result.stdout)
         parsed.lowPowerOn = Self.readLowPowerState()
+        parsed.adapterAttached = Self.readAdapterAttached()
         return parsed
     }
 
@@ -111,16 +112,32 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
     /// view is authoritative. Public so the app can query it on launch before
     /// the first full battery status is available.
     public static func readLowPowerState() -> Bool {
+        BatteryStatusParser.parseLowPowerMode(pmsetOutput: pmset(["-g"]))
+    }
+
+    /// Whether an adapter is attached, from `pmset -g batt`.
+    ///
+    /// Not derivable from `status_csv`: `charging` and `discharging` are both
+    /// off for a full pack on AC, which is the same reading as a pack that is
+    /// merely idle — only pmset distinguishes "plugged in and resting" from
+    /// "on battery". Public for the same reason as `readLowPowerState`.
+    public static func readAdapterAttached() -> Bool {
+        BatteryStatusParser.parseAdapterAttached(pmsetOutput: pmset(["-g", "batt"]))
+    }
+
+    /// Run pmset and return stdout, or "" when it cannot be run. Both pmset
+    /// reads are user-space and cheap; the failure case is simply "unknown",
+    /// which callers treat as "not on AC".
+    private static func pmset(_ arguments: [String]) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        process.arguments = ["-g"]
+        process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return false }
+        guard (try? process.run()) != nil else { return "" }
         process.waitUntilExit()
-        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return BatteryStatusParser.parseLowPowerMode(pmsetOutput: out)
+        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
     }
 
     public func run(_ arguments: [String]) async throws -> CLIResult {

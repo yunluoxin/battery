@@ -9,15 +9,24 @@ public struct BatteryStatus: Equatable, Sendable {
     public var discharging: Bool       // actively discharging (adapter blocked)
     public var maintain: String?       // raw maintain value, e.g. "80", "70-80", "" when off
     public var lowPowerOn: Bool        // macOS Low Power Mode (via pmset)
+    /// Whether a power adapter is attached, regardless of whether the pack is
+    /// taking charge. The two are independent: a full pack, or one parked at
+    /// the top of a maintain band, sits on AC without charging — and that is
+    /// exactly the state the system battery icon marks with a plug.
+    public var adapterAttached: Bool
 
-    public init(percentage: Int, remainingTime: String, charging: Bool, discharging: Bool, maintain: String?, lowPowerOn: Bool = false) {
+    public init(percentage: Int, remainingTime: String, charging: Bool, discharging: Bool, maintain: String?, lowPowerOn: Bool = false, adapterAttached: Bool = false) {
         self.percentage = percentage
         self.remainingTime = remainingTime
         self.charging = charging
         self.discharging = discharging
         self.maintain = maintain
         self.lowPowerOn = lowPowerOn
+        self.adapterAttached = adapterAttached
     }
+
+    /// On AC but not charging: the state the system icon draws with a plug.
+    public var pluggedInNotCharging: Bool { adapterAttached && !charging }
 
     public var maintainRange: MaintainRange? {
         guard let maintain, !maintain.isEmpty, maintain != "off" else { return nil }
@@ -56,6 +65,13 @@ public enum BatteryStatusParser {
             if fields.last == "1" { return true }
         }
         return false
+    }
+
+    /// Whether an adapter is attached, from `pmset -g batt` output. macOS
+    /// appends "; AC attached" to the battery line when it is on AC, and names
+    /// the source in the header line ("Now drawing from 'AC Power'").
+    public static func parseAdapterAttached(pmsetOutput: String) -> Bool {
+        pmsetOutput.contains("AC attached") || pmsetOutput.contains("AC Power")
     }
 
     /// Extract the integer value of a top-level `"Key" = N;` property from

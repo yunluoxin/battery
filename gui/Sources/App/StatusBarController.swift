@@ -128,6 +128,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         let calibrating: Bool
         let level: Int          // 0/25/50/75/100, -1 when status is unknown
         let charging: Bool
+        let pluggedIn: Bool
         let lowPower: Bool
         let percentage: Int      // only meaningful when showPercentage is on
         let showPercentage: Bool
@@ -138,6 +139,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private struct IconStyle: Equatable {
         let level: Int
         let charging: Bool
+        let pluggedIn: Bool
         let tinted: Bool
         let dark: Bool
     }
@@ -148,6 +150,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             calibrating: mode == .calibrating,
             level: percentage.map(StatusIcon.level(for:)) ?? -1,
             charging: Self.isCharging(mode: mode, status: status),
+            pluggedIn: Self.isPluggedIn(mode: mode, status: status),
             lowPower: lowPower,
             percentage: showPercentage ? (percentage ?? -1) : -1,
             showPercentage: showPercentage
@@ -164,7 +167,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         if key.calibrating {
             image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "Battery calibrating")
         } else if key.level >= 0 {
-            image = statusImage(level: key.level, charging: key.charging, tint: lowPower ? .systemYellow : nil)
+            image = statusImage(level: key.level, charging: key.charging, pluggedIn: key.pluggedIn, tint: lowPower ? .systemYellow : nil)
         } else {
             image = NSImage(systemSymbolName: "battery.100", accessibilityDescription: "Battery")
         }
@@ -184,14 +187,14 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     /// resolved here, at draw time, where AppKit has already set the context
     /// for the right display — the icon rebuilds itself on the next redraw if
     /// the appearance has changed since.
-    private func statusImage(level: Int, charging: Bool, tint: NSColor?) -> NSImage? {
+    private func statusImage(level: Int, charging: Bool, pluggedIn: Bool, tint: NSColor?) -> NSImage? {
         NSImage(size: StatusIcon.canvasSize, flipped: false) { [weak self] rect in
             MainActor.assumeIsolated {
                 guard let self else { return false }
                 let dark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                let style = IconStyle(level: level, charging: charging, tinted: tint != nil, dark: dark)
+                let style = IconStyle(level: level, charging: charging, pluggedIn: pluggedIn, tinted: tint != nil, dark: dark)
                 if self.iconCache?.style != style,
-                   let built = StatusIcon.image(level: level, charging: charging, dark: dark, tint: tint) {
+                   let built = StatusIcon.image(level: level, charging: charging, pluggedIn: pluggedIn, dark: dark, tint: tint) {
                     self.iconCache = (style, built)
                 }
                 self.iconCache?.image.draw(in: rect)
@@ -211,6 +214,25 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             return status?.charging ?? false
         case .dischargingTo, .calibrating:
             return false
+        }
+    }
+
+    /// Whether an adapter is attached, which the system icon marks with a plug
+    /// on the battery rather than a bolt.
+    ///
+    /// It is read from pmset rather than inferred from the charging flag,
+    /// because "not charging" is exactly the state this app sits in most of the
+    /// time — a maintain band parks the pack at its upper limit with the
+    /// adapter still plugged in — and that is the state the plug is for. The
+    /// adapter reading wins over the mode even while force-discharging: macOS
+    /// draws the plug there too, since only the blocking, not the adapter, is
+    /// ours.
+    private static func isPluggedIn(mode: OperatingMode, status: BatteryStatus?) -> Bool {
+        switch mode {
+        case .calibrating:
+            return false   // the calibration glyph stands in for the battery
+        case .idle, .maintaining, .chargingTo, .dischargingTo:
+            return status?.pluggedInNotCharging ?? false
         }
     }
 }
