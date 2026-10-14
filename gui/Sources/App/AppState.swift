@@ -20,6 +20,7 @@ final class AppState: ObservableObject {
 
     let cli: BatteryCLI
     private var pollTask: Task<Void, Never>?
+    private var eventMonitor: PowerEventMonitor?
     /// Grace timestamp: a freshly started charge/discharge cycle is not
     /// evaluated for completion until this passes. Prevents the race where the
     /// first poll after toggling still sees the pre-cycle percentage.
@@ -54,9 +55,24 @@ final class AppState: ObservableObject {
     func start() {
         repairAfterMove()
         refresh()
+        // Events, not a timer, are what drives the refreshes: the battery
+        // level moves on its own schedule, and a fixed interval either lags
+        // behind it or keeps re-reading a level that has not moved.
+        let monitor = PowerEventMonitor { [weak self] in
+            self?.refresh()
+        }
+        monitor.start()
+        eventMonitor = monitor
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
+                // Safety net, not the primary trigger. Some state changes
+                // announce themselves through no notification at all: a
+                // `battery maintain` typed in a terminal, a calibration
+                // killed from another shell, the CLI uninstalled underneath
+                // the app. Events cover everything the battery itself does,
+                // so this only has to be slow enough to be free in the common
+                // case while still catching up on the rest.
+                try? await Task.sleep(for: .seconds(300))
                 guard !Task.isCancelled else { break }
                 self?.refresh()
             }
@@ -97,6 +113,7 @@ final class AppState: ObservableObject {
 
     func stop() {
         pollTask?.cancel()
+        eventMonitor?.stop()
     }
 
     // MARK: Polling
