@@ -112,6 +112,23 @@ public enum BatteryStatusParser {
         }
         return nil
     }
+
+    /// Battery health: how much charge the pack can still hold, as a
+    /// percentage of the capacity it was built with.
+    ///
+    /// `AppleRawMaxCapacity` is what the pack holds now and `DesignCapacity`
+    /// is what it held when new, both in mAh. `MaxCapacity` is NOT the
+    /// figure for this: it reads 100 on a pack at any charge level above the
+    /// maintain band, because it is scaled to the current charge, not to the
+    /// design capacity. A pack is only past its design capacity when macOS
+    /// recalibrates it, so a value slightly over 100 is real and shown as is.
+    public static func parseHealthPercent(from output: String) -> Int? {
+        guard let maxCap = parseIORegInt("AppleRawMaxCapacity", from: output),
+              let designCap = parseIORegInt("DesignCapacity", from: output),
+              designCap > 0
+        else { return nil }
+        return Int((Double(maxCap) / Double(designCap) * 100).rounded())
+    }
 }
 
 /// Charge limit, optionally a sailing range.

@@ -44,7 +44,7 @@
 "Restore system default charging" = "恢复系统默认充电设置";
 "Temp" = "温度";
 "Cycles" = "循环次数";
-"MaxCapacity" = "最大容量";
+"Health" = "健康度";
 
 /* MARK: - 关于页 */
 "A menu bar charge limiter wrapping the battery CLI." = "菜单栏充电限制工具，底层调用 battery CLI。";

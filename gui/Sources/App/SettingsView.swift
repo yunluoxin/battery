@@ -148,7 +148,7 @@ private struct BatterySettingsView: View {
         // flight, in which case only the labels captured here would be stale.
         let tempLabel = l10n.t("Temp")
         let cyclesLabel = l10n.t("Cycles")
-        let capacityLabel = l10n.t("MaxCapacity")
+        let healthLabel = l10n.t("Health")
         let unavailable = l10n.t("Unavailable")
         Task.detached(priority: .utility) {
             let process = Process()
@@ -161,11 +161,11 @@ private struct BatterySettingsView: View {
             let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             let temp = BatteryStatusParser.parseIORegInt("Temperature", from: output).map { String(format: "%.1f°C", Double($0) / 100.0) }
             let cycles = BatteryStatusParser.parseIORegInt("CycleCount", from: output).map(String.init)
-            let maxCap = BatteryStatusParser.parseIORegInt("MaxCapacity", from: output).map(String.init)
+            let health = BatteryStatusParser.parseHealthPercent(from: output)
             let parts = [
                 temp.map { "\(tempLabel) \($0)" },
                 cycles.map { "\(cyclesLabel) \($0)" },
-                maxCap.map { "\(capacityLabel) \($0)%" },
+                health.map { "\(healthLabel) \($0)%" },
             ].compactMap { $0 }
             let summary = parts.isEmpty ? unavailable : parts.joined(separator: " · ")
             await MainActor.run {

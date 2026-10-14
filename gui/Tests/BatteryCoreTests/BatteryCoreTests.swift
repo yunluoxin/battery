@@ -140,11 +140,13 @@ final class IORegParserTests: XCTestCase {
     /// Mirrors real `ioreg -rn AppleSmartBattery`: top-level keys use
     /// `"Key" = N;` while nested BatteryData keys use `"Key"=N`.
     private let sample = """
-      "BatteryData" = {"Temperature"=9999,"CycleCount"=9999,"MaxCapacity"=9999,"Voltage"=12326}
+      "BatteryData" = {"Temperature"=9999,"CycleCount"=9999,"MaxCapacity"=9999,"Voltage"=12326,"DesignCapacity"=9999}
       "DesignCycleCount9C" = 1000
       "MaxCapacity" = 100
       "Temperature" = 3083
       "CycleCount" = 53
+      "AppleRawMaxCapacity" = 6191
+      "DesignCapacity" = 6249
 
     """
 
@@ -162,6 +164,62 @@ final class IORegParserTests: XCTestCase {
 
     func testMissingKey() {
         XCTAssertNil(BatteryStatusParser.parseIORegInt("Nonexistent", from: sample))
+    }
+}
+
+final class BatteryHealthTests: XCTestCase {
+    /// Real health is AppleRawMaxCapacity over DesignCapacity: the pack's
+    /// current capacity against the one it was built with.
+    func testHealthPercent() {
+        let output = """
+          "AppleRawMaxCapacity" = 6191
+          "DesignCapacity" = 6249
+        """
+        XCTAssertEqual(BatteryStatusParser.parseHealthPercent(from: output), 99)
+    }
+
+    /// The top-level MaxCapacity reads 100 on a healthy pack at any charge
+    /// level, so using it for health would report every battery as perfect.
+    func testIgnoresMaxCapacity() {
+        let output = """
+          "MaxCapacity" = 100
+          "AppleRawMaxCapacity" = 3100
+          "DesignCapacity" = 6250
+        """
+        XCTAssertEqual(BatteryStatusParser.parseHealthPercent(from: output), 50)
+    }
+
+    func testRoundsToNearestPercent() {
+        let output = """
+          "AppleRawMaxCapacity" = 6100
+          "DesignCapacity" = 6249
+        """
+        // 97.61% → 98
+        XCTAssertEqual(BatteryStatusParser.parseHealthPercent(from: output), 98)
+    }
+
+    /// A pack recalibrated above its design capacity reports over 100, which
+    /// is a real reading and must survive rather than be clamped.
+    func testAboveDesignCapacityIsNotClamped() {
+        let output = """
+          "AppleRawMaxCapacity" = 6300
+          "DesignCapacity" = 6249
+        """
+        XCTAssertEqual(BatteryStatusParser.parseHealthPercent(from: output), 101)
+    }
+
+    func testMissingKeysYieldNil() {
+        XCTAssertNil(BatteryStatusParser.parseHealthPercent(from: ""))
+        XCTAssertNil(BatteryStatusParser.parseHealthPercent(from: "  \"MaxCapacity\" = 100\n"))
+    }
+
+    /// A zero design capacity would divide by zero; nil is the honest answer.
+    func testZeroDesignCapacityYieldsNil() {
+        let output = """
+          "AppleRawMaxCapacity" = 6191
+          "DesignCapacity" = 0
+        """
+        XCTAssertNil(BatteryStatusParser.parseHealthPercent(from: output))
     }
 }
 
