@@ -24,3 +24,4 @@ Before finishing any task, make sure that you:
 
 - do a sanity check for bugs
 - check that comments still reflect the changed code
+- run `./gui/build.sh --install` from the project root and make sure it succeeds — it compiles the GUI, bundles the app, and installs it into `/Applications` so the user can test the change
