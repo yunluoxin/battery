@@ -377,11 +377,26 @@ final class AppState: ObservableObject {
     }
 
     func setLowPower(_ on: Bool) {
-        // Optimistic update; the next refresh re-reads the real system state.
+        // Optimistic update; the refresh below replaces it with whatever the
+        // system actually did.
         lowPowerOn = on
         Task {
             do {
                 _ = try await cli.setLowPower(on)
+                // Re-read on success too, and not only to confirm the flag:
+                // Low Power Mode changes what the pack is allowed to do, and
+                // the time-remaining estimate moves with it. Only the system
+                // recomputes that, and only something asking pmset again
+                // finds out. Every other action here re-reads after changing
+                // something; this one did not, which left the popover's
+                // countdown and Settings' status row showing the reading from
+                // before the toggle until an unrelated event or the
+                // safety-net poll came round — up to five minutes.
+                //
+                // Whether the number visibly changes is still the system's
+                // call: it recomputes the estimate on its own schedule, not on
+                // this call.
+                await refreshAsync()
             } catch {
                 await refreshAsync()    // revert to actual system state
                 show(error)
