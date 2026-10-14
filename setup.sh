@@ -92,7 +92,29 @@ else
 	batteryfolder="$tempfolder/battery"
 	rm -rf "$batteryfolder"
 	mkdir -p "$batteryfolder"
-	curl -sSL -o "$batteryfolder/repo.zip" "https://github.com/actuallymentor/battery/archive/refs/heads/$update_branch.zip"
+	# The progress meter is not decoration. This archive is ~2.3 MB and on a
+	# slow link it arrives at a crawl — measured at roughly 25 KB/s from a
+	# mainland China connection, which puts the transfer past 90 seconds
+	# before it finishes. -s took the meter with it, so a download that was
+	# working perfectly looked exactly like a hang.
+	#
+	# The timeouts are the other half, and they exist to stop the opposite
+	# failure: a route that black-holes the connection would otherwise wait
+	# forever. Both sit well above what a healthy but slow transfer needs —
+	# the TLS handshake alone took 11 seconds here — since a timeout that
+	# fires on a download about to succeed is worse than no timeout at all.
+	#
+	# --fail covers a third: a 404 would otherwise be saved as repo.zip and
+	# blow up later in unzip with no hint as to why.
+	if ! curl -L --fail --connect-timeout 30 --max-time 300 \
+		-o "$batteryfolder/repo.zip" \
+		"https://github.com/actuallymentor/battery/archive/refs/heads/$update_branch.zip"; then
+		echo "❌ Download failed."
+		echo "   If GitHub is slow or unreachable from this network, install from this"
+		echo "   checkout instead — it needs no network at all:"
+		echo "     $script_dir/setup.sh --local"
+		exit 1
+	fi
 	unzip -qq "$batteryfolder/repo.zip" -d "$batteryfolder"
 	cp -r "$batteryfolder/$in_zip_folder_name"/* "$batteryfolder"
 	rm "$batteryfolder/repo.zip"
