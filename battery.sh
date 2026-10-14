@@ -4,7 +4,7 @@
 ## Update management
 ## variables are used by this binary as well at the update script
 ## ###############
-BATTERY_CLI_VERSION="v1.3.5"
+BATTERY_CLI_VERSION="v1.3.6"
 
 # If a script may run as root:
 #   - Reset PATH to safe defaults at the very beginning of the script.
@@ -457,6 +457,32 @@ function get_remaining_time() {
 function get_charger_state() {
 	ac_attached=$(pmset -g batt | tail -n1 | awk '{ x=match($0, /AC attached/) > 0; print x }')
 	echo "$ac_attached"
+}
+
+# Whether an adapter is attached at all, which is not the same question as
+# get_charger_state above. A pack held off charge while plugged in reports
+# neither "AC attached" on its battery line nor any source of its own: the
+# only trace is the "Now drawing from 'AC Power'" header. Callers that draw
+# an adapter indicator need that case to count as attached.
+function get_adapter_attached() {
+	attached=$(pmset -g batt | awk '/AC attached/ || /AC Power/ { print 1; exit }')
+	if [[ -z "$attached" ]]; then
+		echo "0"
+	else
+		echo "1"
+	fi
+}
+
+# System-wide Low Power Mode state, as 1 or 0 for machine-readable callers.
+# Returns 0 (not on) when the key is absent, matching how the GUI treats an
+# unreadable state.
+function get_low_power_enabled() {
+	low_power_state=$(get_low_power_state)
+	if [[ "$low_power_state" == "on" ]]; then
+		echo "1"
+	else
+		echo "0"
+	fi
 }
 
 function get_maintain_percentage() {
@@ -1284,7 +1310,11 @@ fi
 # Status logger in csv format
 if [[ "$action" == "status_csv" ]]; then
 
-	echo "$(get_battery_percentage),$(get_remaining_time),$(get_smc_charging_status),$(get_smc_discharging_status),$(get_maintain_percentage)"
+	# The last two columns (adapter attached, low power mode) were added in
+	# v1.3.6 so a caller can get the whole picture from one invocation. They
+	# are appended rather than inserted, leaving the first five columns — the
+	# ones every existing consumer reads by position — exactly as they were.
+	echo "$(get_battery_percentage),$(get_remaining_time),$(get_smc_charging_status),$(get_smc_discharging_status),$(get_maintain_percentage),$(get_adapter_attached),$(get_low_power_enabled)"
 
 fi
 

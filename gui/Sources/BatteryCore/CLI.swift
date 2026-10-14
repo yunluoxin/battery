@@ -102,25 +102,30 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
             throw CLIError.commandFailed(exitCode: result.exitCode, output: result.stderr + result.stdout)
         }
         var parsed = try BatteryStatusParser.parseCSV(result.stdout)
-        parsed.lowPowerOn = Self.readLowPowerState()
-        parsed.adapterAttached = Self.readAdapterAttached()
+        // CLI v1.3.6 reports the power state in its own output, which saves
+        // the two extra pmset processes this used to spawn on every poll. An
+        // older binary omits those columns, and only then is pmset consulted.
+        if parsed.powerColumnsMissing {
+            parsed.lowPowerOn = Self.readLowPowerState()
+            parsed.adapterAttached = Self.readAdapterAttached()
+        }
         return parsed
     }
 
     /// Read Low Power Mode straight from pmset (user-space, no sudo needed).
     /// The CLI sets it with `-a` (all power sources), so the merged `pmset -g`
-    /// view is authoritative. Public so the app can query it on launch before
-    /// the first full battery status is available.
+    /// view is authoritative. Used as the fallback for a CLI predating
+    /// v1.3.6, and on launch before the first full battery status is available.
     public static func readLowPowerState() -> Bool {
         BatteryStatusParser.parseLowPowerMode(pmsetOutput: pmset(["-g"]))
     }
 
     /// Whether an adapter is attached, from `pmset -g batt`.
     ///
-    /// Not derivable from `status_csv`: `charging` and `discharging` are both
-    /// off for a full pack on AC, which is the same reading as a pack that is
-    /// merely idle — only pmset distinguishes "plugged in and resting" from
-    /// "on battery". Public for the same reason as `readLowPowerState`.
+    /// Still not derivable from the older five-column `status_csv`, where
+    /// `charging` and `discharging` are both off for a full pack on AC, which
+    /// is the same reading as a pack that is merely idle — only pmset
+    /// distinguishes "plugged in and resting" from "on battery".
     public static func readAdapterAttached() -> Bool {
         BatteryStatusParser.parseAdapterAttached(pmsetOutput: pmset(["-g", "batt"]))
     }

@@ -1,14 +1,15 @@
 import Foundation
 
 /// Parsed from `battery status_csv`:
-/// percentage,remaining_time,charging_status,discharging_status,maintain
+/// percentage,remaining_time,charging_status,discharging_status,maintain,
+/// adapter_attached,low_power_enabled
 public struct BatteryStatus: Equatable, Sendable {
     public var percentage: Int
     public var remainingTime: String
     public var charging: Bool          // smc charging status: "on"/"off"/...
     public var discharging: Bool       // actively discharging (adapter blocked)
     public var maintain: String?       // raw maintain value, e.g. "80", "70-80", "" when off
-    public var lowPowerOn: Bool        // macOS Low Power Mode (via pmset)
+    public var lowPowerOn: Bool        // macOS Low Power Mode
     /// Whether a power adapter is attached, regardless of whether the pack is
     /// taking charge. The two are independent: a full pack, or one parked at
     /// the top of a maintain band, sits on AC without charging — and that is
@@ -24,6 +25,14 @@ public struct BatteryStatus: Equatable, Sendable {
         self.lowPowerOn = lowPowerOn
         self.adapterAttached = adapterAttached
     }
+
+    /// Whether the CLI that produced this status predates v1.3.6 and left the
+    /// adapter and low-power columns out.
+    ///
+    /// Their absence is not an answer of "no": the caller has to read pmset
+    /// itself. Carried on the status so the fallback can be decided from the
+    /// parsed line rather than by inspecting the raw output a second time.
+    public var powerColumnsMissing: Bool = false
 
     /// On AC but not charging: the state the system icon draws with a plug.
     public var pluggedInNotCharging: Bool { adapterAttached && !charging }
@@ -69,14 +78,23 @@ public enum BatteryStatusParser {
         let chargingRaw = fields[2].lowercased()
         let dischargingRaw = fields[3].lowercased()
         let maintain = fields.count > 4 ? fields[4] : nil
+        // Columns 6 and 7 arrived in CLI v1.3.6. Their absence means an older
+        // binary is installed, not that the answer is "no": the caller falls
+        // back to reading pmset itself when they are missing.
+        let adapterAttached = fields.count > 5 ? fields[5] == "1" : false
+        let lowPowerOn = fields.count > 6 ? fields[6] == "1" : false
         // Real CLI output uses "enabled"/"disabled" and "discharging"/"not discharging".
-        return BatteryStatus(
+        var status = BatteryStatus(
             percentage: percentage,
             remainingTime: fields[1],
             charging: ["on", "yes", "true", "1", "enabled", "charging"].contains(chargingRaw),
             discharging: ["on", "yes", "true", "1", "enabled", "discharging"].contains(dischargingRaw),
-            maintain: (maintain?.isEmpty == false) ? maintain : nil
+            maintain: (maintain?.isEmpty == false) ? maintain : nil,
+            lowPowerOn: lowPowerOn,
+            adapterAttached: adapterAttached
         )
+        status.powerColumnsMissing = fields.count <= 6
+        return status
     }
 
     /// Parse the Low Power Mode state from full `pmset -g` output.

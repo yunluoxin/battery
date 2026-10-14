@@ -50,6 +50,58 @@ final class BatteryStatusParserTests: XCTestCase {
     }
 }
 
+final class PowerColumnParserTests: XCTestCase {
+    /// CLI v1.3.6 and later: the power state travels with the status, so the
+    /// app does not have to spawn pmset alongside the CLI.
+    func testParsesPowerColumns() throws {
+        let status = try BatteryStatusParser.parseCSV("71,attached;,disabled,not discharging,70-80,1,1\n")
+        XCTAssertTrue(status.adapterAttached)
+        XCTAssertTrue(status.lowPowerOn)
+        XCTAssertFalse(status.powerColumnsMissing)
+    }
+
+    func testPowerColumnsOff() throws {
+        let status = try BatteryStatusParser.parseCSV("71,attached;,disabled,not discharging,80,1,0\n")
+        XCTAssertTrue(status.adapterAttached)
+        XCTAssertFalse(status.lowPowerOn)
+        XCTAssertFalse(status.powerColumnsMissing)
+    }
+
+    /// The regression this column exists for: a pack parked on AC without
+    /// charging reports adapter=1 while charging stays off. Reading the
+    /// adapter out of the charging flag would lose the plug.
+    func testAttachedButNotCharging() throws {
+        let status = try BatteryStatusParser.parseCSV("80,attached;,disabled,not discharging,80,1,0\n")
+        XCTAssertTrue(status.pluggedInNotCharging)
+    }
+
+    /// An older CLI emits five columns. The two it omits are unknown, not
+    /// false, and the caller has to go read pmset.
+    func testOlderCLISignalsMissingColumns() throws {
+        let status = try BatteryStatusParser.parseCSV("80,2:15,on,off,80\n")
+        XCTAssertTrue(status.powerColumnsMissing)
+        XCTAssertFalse(status.adapterAttached)
+        XCTAssertFalse(status.lowPowerOn)
+    }
+
+    /// The maintain column is empty when nothing is maintained, but the power
+    /// columns after it must still land in the right positions.
+    func testEmptyMaintainWithPowerColumns() throws {
+        let status = try BatteryStatusParser.parseCSV("55,attached;,enabled,not discharging,,0,0\n")
+        XCTAssertNil(status.maintainRange)
+        XCTAssertFalse(status.adapterAttached)
+        XCTAssertFalse(status.lowPowerOn)
+        XCTAssertFalse(status.powerColumnsMissing)
+    }
+
+    /// Any value other than "1" means no. The CLI only ever writes 0 or 1.
+    func testNonOneColumnReadsAsOff() throws {
+        let status = try BatteryStatusParser.parseCSV("55,1:00,on,off,,yes,on\n")
+        XCTAssertFalse(status.adapterAttached)
+        XCTAssertFalse(status.lowPowerOn)
+    }
+}
+
 final class LowPowerModeParserTests: XCTestCase {
     /// Realistic `pmset -g` output shape (multi-line).
     private func pmsetOutput(lowPower: Int) -> String {
