@@ -213,9 +213,9 @@ private struct AboutSettingsView: View {
             Text(l10n.t("A menu bar charge limiter wrapping the battery CLI."))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            // Each row is one self-contained centered line — "CLI v1.3.5" and
-            // "App v1.0.0" each sit on their own centre, not split into a
-            // label column and a value column.
+            // Each row is one self-contained centered line — the CLI version
+            // and the app version each sit on their own centre, not split
+            // into a label column and a value column.
             VStack(spacing: 4) {
                 Text(l10n.f("CLI %@", cliVersionText))
                     .foregroundStyle(state.cliAvailable ? Color.primary : Color.red)
