@@ -217,6 +217,12 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// UI language. `.system` is the default so a fresh install follows the
     /// Mac's own language list without the user visiting Settings first.
     public var language: AppLanguage = .system
+    /// Switch Low Power Mode on by itself once the charge level reaches
+    /// `autoLowPowerThreshold`. Off by default: macOS may already do this on
+    /// some hardware, so the rule is opt-in.
+    public var autoLowPower: Bool = false
+    /// Charge level that fires the rule, as a percentage.
+    public var autoLowPowerThreshold: Int = AutoLowPowerRule.defaultThreshold
 
     public init() {}
 
@@ -243,6 +249,10 @@ public struct AppConfig: Codable, Equatable, Sendable {
         // a newer one) decodes to nil and lands on .system rather than
         // throwing away the rest of the config with it.
         language = get(.language, .system)
+        autoLowPower = get(.autoLowPower, false)
+        // Clamped on the way in: a hand-edited config could otherwise park the
+        // stepper outside the range it offers and leave the row unreadable.
+        autoLowPowerThreshold = AutoLowPowerRule.clamp(get(.autoLowPowerThreshold, AutoLowPowerRule.defaultThreshold))
     }
 
     /// The range sent to the CLI: the full sailing band when sailing is on,

@@ -24,6 +24,12 @@ final class AppState: ObservableObject {
     /// evaluated for completion until this passes. Prevents the race where the
     /// first poll after toggling still sees the pre-cycle percentage.
     private var cycleStartedAt: Date?
+    /// Whether the auto low-power rule may still fire. Cleared by a firing and
+    /// restored only once the level has climbed clear of the threshold, so one
+    /// drop below the threshold produces one `smc low on` rather than one per
+    /// poll. Deliberately not persisted: a relaunch starts armed, which is what
+    /// you want — a pack still below the threshold at launch should get the mode.
+    private var autoLowPowerArmed: Bool = true
 
     init(cli: BatteryCLI = ProcessBatteryCLI()) {
         self.cli = cli
@@ -116,6 +122,14 @@ final class AppState: ObservableObject {
             // single source of truth.
             lowPowerOn = newStatus.lowPowerOn
 
+            // A good poll clears whatever the last failure reported. Set
+            // before the auto rule runs, so a rule failure in this same poll
+            // survives to the UI instead of being wiped by the poll that
+            // detected it.
+            errorMessage = nil
+
+            await applyAutoLowPowerRule(newStatus)
+
             // Detect completion of an active charge/discharge cycle. A grace
             // period after starting avoids the race where the first poll still
             // sees the pre-cycle percentage and instantly "completes".
@@ -130,7 +144,6 @@ final class AppState: ObservableObject {
                 }
             }
             mode = ModeDeriver.derive(config: config, status: newStatus, calibrating: calibrating)
-            errorMessage = nil
         } catch CLIError.cliNotFound {
             cliAvailable = false
         } catch {
@@ -291,6 +304,55 @@ final class AppState: ObservableObject {
             config.setTarget(value, for: .discharge)
         }
         saveConfig()
+    }
+
+    /// The auto rule's single action: switch Low Power Mode on, once per drop.
+    ///
+    /// Runs off the same poll that mirrors the system state, so it sees the same
+    /// `lowPowerOn` value the menu bar is about to draw.
+    private func applyAutoLowPowerRule(_ status: BatteryStatus) async {
+        if AutoLowPowerRule.shouldRearm(percentage: status.percentage, threshold: config.autoLowPowerThreshold) {
+            autoLowPowerArmed = true
+        }
+        guard AutoLowPowerRule.shouldEnable(enabled: config.autoLowPower,
+                                            armed: autoLowPowerArmed,
+                                            lowPowerOn: status.lowPowerOn,
+                                            percentage: status.percentage,
+                                            threshold: config.autoLowPowerThreshold)
+        else { return }
+
+        autoLowPowerArmed = false
+        do {
+            _ = try await cli.setLowPower(true)
+        } catch {
+            // The command failed, so the mode is still off. Re-arm rather than
+            // leave the rule disarmed until the level recovers — the failure
+            // may well have been transient.
+            autoLowPowerArmed = true
+            show(error)
+        }
+    }
+
+    /// The rule's switch. Turning it on re-reads the level straight away,
+    /// otherwise a user watching a battery already below the threshold would
+    /// wait up to a minute for the toggle to appear to do anything.
+    func setAutoLowPower(_ enabled: Bool) {
+        config.autoLowPower = enabled
+        if enabled { autoLowPowerArmed = true }
+        saveConfig()
+        guard enabled else { return }
+        refresh()
+    }
+
+    func setAutoLowPowerThreshold(_ value: Int) {
+        config.autoLowPowerThreshold = AutoLowPowerRule.clamp(value)
+        // Re-arm so a newly chosen level applies now, even when it is above a
+        // threshold that has already fired: the user has just restated the
+        // rule, and the next poll is up to a minute away.
+        autoLowPowerArmed = true
+        saveConfig()
+        guard config.autoLowPower else { return }
+        refresh()
     }
 
     func toggleLowPower() {

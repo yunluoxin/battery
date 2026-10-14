@@ -71,6 +71,29 @@ private struct GeneralSettingsView: View {
                     Text(l10n.t(behavior.displayName)).tag(behavior)
                 }
             }
+
+            Toggle(l10n.t("Auto Low Power Mode"), isOn: Binding(
+                get: { state.config.autoLowPower },
+                set: { state.setAutoLowPower($0) }
+            ))
+
+            // The level the rule fires at. Hidden rather than greyed out while
+            // the rule is off: with nothing for the number to modify, a
+            // disabled stepper is just a row to read past.
+            if state.config.autoLowPower {
+                Stepper(value: Binding(
+                    get: { state.config.autoLowPowerThreshold },
+                    set: { state.setAutoLowPowerThreshold($0) }
+                ), in: AutoLowPowerRule.thresholdRange, step: 5) {
+                    HStack {
+                        Text(l10n.t("When the battery is below:"))
+                        Spacer()
+                        Text("\(state.config.autoLowPowerThreshold)%")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()

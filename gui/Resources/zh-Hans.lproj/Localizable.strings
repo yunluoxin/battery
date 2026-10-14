@@ -34,6 +34,8 @@
 "Hide status bar icon" = "隐藏菜单栏图标";
 "Show battery percentage in menu bar" = "在菜单栏显示电量百分比";
 "After Charge/Discharge completes:" = "充电/放电完成后：";
+"Auto Low Power Mode" = "低电量时自动开启低电量模式";
+"When the battery is below:" = "电量低于：";
 "Resume Maintain mode" = "恢复维持模式";
 "Restore system default" = "恢复系统默认";
 

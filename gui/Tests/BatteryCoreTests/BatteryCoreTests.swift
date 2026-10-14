@@ -251,6 +251,19 @@ final class AppConfigDecodingTests: XCTestCase {
         XCTAssertTrue(config.showPercentageInMenuBar)
         XCTAssertFalse(config.hideStatusBarIcon)
         XCTAssertEqual(config.language, .system)
+        XCTAssertFalse(config.autoLowPower)
+        XCTAssertEqual(config.autoLowPowerThreshold, AutoLowPowerRule.defaultThreshold)
+    }
+
+    /// A hand-edited or newer-build config can name a level outside the range
+    /// the Settings stepper offers, which would leave the row unreadable.
+    func testOutOfRangeAutoLowPowerThresholdIsClamped() throws {
+        let json = """
+        { "autoLowPower": true, "autoLowPowerThreshold": 95 }
+        """
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+        XCTAssertTrue(config.autoLowPower)
+        XCTAssertEqual(config.autoLowPowerThreshold, AutoLowPowerRule.thresholdRange.upperBound)
     }
 
     func testRoundTripKeepsEveryPreference() throws {
@@ -265,6 +278,8 @@ final class AppConfigDecodingTests: XCTestCase {
         original.hideStatusBarIcon = true
         original.postCompletion = .restoreDefault
         original.language = .zh
+        original.autoLowPower = true
+        original.autoLowPowerThreshold = 25
 
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode(AppConfig.self, from: data), original)
@@ -286,6 +301,92 @@ final class AppConfigDecodingTests: XCTestCase {
         config.setTarget(BatteryCycle.discharge.defaultTarget, for: .discharge)
         XCTAssertEqual(config.chargeTarget, 100)
         XCTAssertEqual(config.dischargeTarget, 40)
+    }
+}
+
+final class AutoLowPowerRuleTests: XCTestCase {
+    private func shouldFire(enabled: Bool = true,
+                            armed: Bool = true,
+                            lowPowerOn: Bool = false,
+                            percentage: Int,
+                            threshold: Int = AutoLowPowerRule.defaultThreshold) -> Bool {
+        AutoLowPowerRule.shouldEnable(enabled: enabled,
+                                      armed: armed,
+                                      lowPowerOn: lowPowerOn,
+                                      percentage: percentage,
+                                      threshold: threshold)
+    }
+
+    func testFiresAtAndBelowThreshold() {
+        XCTAssertTrue(shouldFire(percentage: 20))
+        XCTAssertTrue(shouldFire(percentage: 15))
+        XCTAssertFalse(shouldFire(percentage: 21))
+    }
+
+    /// The rule is deliberately independent of the power source, so a pack on
+    /// AC below the threshold still fires.
+    func testFiresOnACToo() {
+        XCTAssertTrue(shouldFire(percentage: 10))
+    }
+
+    func testDisabledRuleNeverFires() {
+        XCTAssertFalse(shouldFire(enabled: false, percentage: 5))
+    }
+
+    /// Level-triggered behaviour would re-issue the command on every poll.
+    func testDisarmedAfterFiring() {
+        XCTAssertFalse(shouldFire(armed: false, percentage: 5))
+    }
+
+    /// macOS may have switched it on by itself (or the user did); the rule has
+    /// no work to do, so it must not count that as a firing and disarm.
+    func testAlreadyOnIsNotAFiring() {
+        XCTAssertFalse(shouldFire(lowPowerOn: true, percentage: 5))
+    }
+
+    /// Re-arming needs the hysteresis band, otherwise a level bouncing either
+    /// side of the threshold would fire on consecutive polls.
+    func testRearmRequiresClearingTheHysteresisBand() {
+        let threshold = AutoLowPowerRule.defaultThreshold
+        XCTAssertFalse(AutoLowPowerRule.shouldRearm(percentage: threshold + 1, threshold: threshold))
+        XCTAssertFalse(AutoLowPowerRule.shouldRearm(percentage: threshold + AutoLowPowerRule.hysteresis - 1,
+                                                    threshold: threshold))
+        XCTAssertTrue(AutoLowPowerRule.shouldRearm(percentage: threshold + AutoLowPowerRule.hysteresis,
+                                                   threshold: threshold))
+        XCTAssertTrue(AutoLowPowerRule.shouldRearm(percentage: 100, threshold: threshold))
+    }
+
+    func testClampPullsLevelsIntoTheOfferedRange() {
+        XCTAssertEqual(AutoLowPowerRule.clamp(0), AutoLowPowerRule.thresholdRange.lowerBound)
+        XCTAssertEqual(AutoLowPowerRule.clamp(-5), AutoLowPowerRule.thresholdRange.lowerBound)
+        XCTAssertEqual(AutoLowPowerRule.clamp(1000), AutoLowPowerRule.thresholdRange.upperBound)
+        XCTAssertEqual(AutoLowPowerRule.clamp(30), 30)
+    }
+
+    /// The whole sequence, which is what the AppState loop actually runs:
+    /// fire, stay quiet while it keeps discharging, then re-arm on the way back
+    /// up and fire again if it falls a second time.
+    func testDropRearmDropFiresTwice() {
+        var armed = true
+        let threshold = AutoLowPowerRule.defaultThreshold
+
+        func poll(_ percentage: Int, lowPowerOn: Bool) -> Bool {
+            if AutoLowPowerRule.shouldRearm(percentage: percentage, threshold: threshold) { armed = true }
+            let fires = AutoLowPowerRule.shouldEnable(enabled: true,
+                                                     armed: armed,
+                                                     lowPowerOn: lowPowerOn,
+                                                     percentage: percentage,
+                                                     threshold: threshold)
+            if fires { armed = false }
+            return fires
+        }
+
+        XCTAssertTrue(poll(19, lowPowerOn: false))          // crossed the line
+        XCTAssertFalse(poll(18, lowPowerOn: true))          // already on, no re-fire
+        XCTAssertFalse(poll(15, lowPowerOn: true))          // still down there
+        XCTAssertFalse(poll(22, lowPowerOn: true))          // inside the band
+        XCTAssertFalse(poll(25, lowPowerOn: true))          // re-armed, but above the line
+        XCTAssertTrue(poll(18, lowPowerOn: false))          // second drop fires again
     }
 }
 
