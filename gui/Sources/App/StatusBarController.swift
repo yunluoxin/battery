@@ -213,25 +213,26 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Whether the pack is taking charge right now. In idle and maintain mode
-    /// this follows the battery itself: a maintain band parks the pack at its
-    /// upper limit most of the time, and a bolt there would still read as
-    /// "full".
+    /// Whether the pack is taking charge right now, which the bolt claims and
+    /// nothing else does.
     ///
-    /// The adapter is checked first because nothing charges without one, so a
-    /// status claiming otherwise is wrong — and the bolt is the one glyph that
-    /// has to be right about that. The plug below already separates "on AC"
-    /// from "charging", which leaves a bolt meaning only one thing: a current
-    /// is flowing. A pack that is merely allowed to charge reads "enabled" in
-    /// the CLI's permission flag, and that flag is what put a permanent bolt
-    /// on the bar of a laptop running unplugged.
+    /// The battery answers this for every mode, `.chargingTo` included. That
+    /// case used to return true outright, back when the status column was the
+    /// CLI's charging *permission* flag and carried no information worth
+    /// reading; the mode was then the only signal available. It is a request,
+    /// not a reading: switching charging on with nothing plugged in leaves the
+    /// CLI waiting for an adapter that may never arrive, and drawing a bolt
+    /// through that wait reports a current that is not flowing.
+    ///
+    /// The plug below already separates "on AC" from "charging", which is what
+    /// leaves a bolt meaning exactly one thing, and makes it the one glyph that
+    /// has to be right about it. A pack merely allowed to charge reads
+    /// "enabled" in that old flag, and believing it is what put a permanent
+    /// bolt on the bar of a laptop running unplugged.
     private static func isCharging(mode: OperatingMode, status: BatteryStatus?) -> Bool {
         switch mode {
-        case .chargingTo:
-            return true
-        case .idle, .maintaining:
-            guard status?.adapterAttached == true else { return false }
-            return status?.charging ?? false
+        case .idle, .maintaining, .chargingTo:
+            return status?.isChargingNow ?? false
         case .dischargingTo, .calibrating:
             return false
         }

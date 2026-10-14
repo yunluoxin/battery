@@ -2,7 +2,7 @@ import Foundation
 
 /// Parsed from `battery status_csv`:
 /// percentage,remaining_time,charging_status,discharging_status,maintain,
-/// adapter_attached,low_power_enabled
+/// adapter_attached,low_power_enabled,live_power_state
 public struct BatteryStatus: Equatable, Sendable {
     public var percentage: Int
     public var remainingTime: String
@@ -53,6 +53,16 @@ public struct BatteryStatus: Equatable, Sendable {
 
     /// On AC but not charging: the state the system icon draws with a plug.
     public var pluggedInNotCharging: Bool { adapterAttached && !charging }
+
+    /// Whether charge is moving into the pack right now, which is the one
+    /// thing the menu bar's bolt is allowed to claim.
+    ///
+    /// The adapter is part of the question, not just the flag: nothing charges
+    /// without one. That includes a charge cycle switched on with nothing
+    /// plugged in — the request stands and the CLI waits for an adapter to
+    /// turn up, but no current is flowing, so a bolt there would be claiming
+    /// something that is not happening.
+    public var isChargingNow: Bool { adapterAttached && charging }
 
     public var maintainRange: MaintainRange? {
         guard let maintain, !maintain.isEmpty, maintain != "off" else { return nil }

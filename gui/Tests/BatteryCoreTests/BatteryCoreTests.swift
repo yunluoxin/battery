@@ -131,6 +131,27 @@ final class PowerColumnParserTests: XCTestCase {
         XCTAssertFalse(status.powerColumnsMissing)
         XCTAssertTrue(status.liveStateColumnMissing)
     }
+
+    /// A charge cycle switched on with nothing plugged in: the CLI is waiting
+    /// for an adapter, but no current is moving, so the bolt must stay off.
+    func testChargeCycleWithoutAdapterIsNotChargingNow() throws {
+        let status = try BatteryStatusParser.parseCSV("63,8:13,enabled,not discharging,,0,1,discharging\n")
+        XCTAssertFalse(status.isChargingNow)
+        XCTAssertFalse(status.pluggedInNotCharging)
+    }
+
+    func testChargingOnAdapterIsChargingNow() throws {
+        let status = try BatteryStatusParser.parseCSV("63,2:15,enabled,not discharging,,1,1,charging\n")
+        XCTAssertTrue(status.isChargingNow)
+    }
+
+    /// On AC and blocked is neither charging nor unplugged, which is the case
+    /// the plug exists for.
+    func testBlockedOnAdapterIsNeither() throws {
+        let status = try BatteryStatusParser.parseCSV("70,attached;,enabled,not discharging,60-70,1,1,idle\n")
+        XCTAssertFalse(status.isChargingNow)
+        XCTAssertTrue(status.pluggedInNotCharging)
+    }
 }
 
 final class LivePowerStateParserTests: XCTestCase {
