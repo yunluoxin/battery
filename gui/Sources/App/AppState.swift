@@ -325,8 +325,11 @@ final class AppState: ObservableObject {
 
     /// The auto rule's single action: switch Low Power Mode on, once per drop.
     ///
-    /// Runs off the same poll that mirrors the system state, so it sees the same
-    /// `lowPowerOn` value the menu bar is about to draw.
+    /// Runs off the poll that read the level rather than off a poll of its own,
+    /// so it costs nothing extra. The armed flag is cleared *before* the command
+    /// goes out, which is what makes firing once per drop hold however many
+    /// refreshes arrive afterwards — the one this sits inside, or the one the
+    /// notification it provokes — all find the rule disarmed.
     private func applyAutoLowPowerRule(_ status: BatteryStatus) async {
         if AutoLowPowerRule.shouldRearm(percentage: status.percentage, threshold: config.autoLowPowerThreshold) {
             autoLowPowerArmed = true
@@ -341,6 +344,15 @@ final class AppState: ObservableObject {
         autoLowPowerArmed = false
         do {
             _ = try await cli.setLowPower(true)
+            // Mirror the change rather than read it back. The status this poll
+            // is holding predates the command, so without this the toggle sits
+            // showing off while the mode is on, until some unrelated event
+            // refreshes it. Re-reading would mean a second CLI run nested
+            // inside the refresh that is deciding this — and the rule is
+            // already disarmed, so the nested pass could not act on anything
+            // anyway. The next event-driven refresh confirms it from pmset
+            // like any other state.
+            lowPowerOn = true
         } catch {
             // The command failed, so the mode is still off. Re-arm rather than
             // leave the rule disarmed until the level recovers — the failure
