@@ -6,9 +6,8 @@ final class BatteryStatusParserTests: XCTestCase {
         let status = try BatteryStatusParser.parseCSV("80,2:15,on,off,80\n")
         XCTAssertEqual(status.percentage, 80)
         XCTAssertEqual(status.remainingTime, "2:15")
-        XCTAssertTrue(status.charging)
-        XCTAssertFalse(status.discharging)
         XCTAssertEqual(status.maintain, "80")
+        XCTAssertTrue(status.liveStateColumnMissing)
     }
 
     func testParsesRangeMaintain() throws {
@@ -22,7 +21,7 @@ final class BatteryStatusParserTests: XCTestCase {
     }
 
     func testDischargingFlag() throws {
-        let status = try BatteryStatusParser.parseCSV("60,3:00,off,on,")
+        let status = try BatteryStatusParser.parseCSV("60,3:00,off,on,,0,0,discharging")
         XCTAssertTrue(status.discharging)
         XCTAssertFalse(status.charging)
     }
@@ -38,9 +37,16 @@ final class BatteryStatusParserTests: XCTestCase {
         XCTAssertNil(status.timeRemaining)
     }
 
-    func testRealCLIEnabledFormat() throws {
+    /// The bug this whole column exists for. `CH0B` reads "enabled" whenever
+    /// charging is *allowed*, which is on every healthy machine, so the menu
+    /// bar drew a bolt while this laptop sat unplugged at 65% and falling.
+    /// The live-state column is what says charge is actually moving.
+    func testLiveStateColumnOverridesThePermissionFlag() throws {
         let status = try BatteryStatusParser.parseCSV("55,attached;,enabled,not discharging,")
-        XCTAssertTrue(status.charging)
+        // No live column, so nothing is claimed either way — the app fills
+        // this in from pmset rather than believing the permission flag.
+        XCTAssertTrue(status.liveStateColumnMissing)
+        XCTAssertFalse(status.charging)
         XCTAssertFalse(status.discharging)
         XCTAssertNil(status.maintainRange)
     }
@@ -99,6 +105,82 @@ final class PowerColumnParserTests: XCTestCase {
         let status = try BatteryStatusParser.parseCSV("55,1:00,on,off,,yes,on\n")
         XCTAssertFalse(status.adapterAttached)
         XCTAssertFalse(status.lowPowerOn)
+    }
+
+    /// CLI v1.3.7 and later: the live power state rides along with the rest,
+    /// so the app reads the whole power picture from one invocation.
+    func testParsesLiveStateColumn() throws {
+        let status = try BatteryStatusParser.parseCSV("65,8:53,enabled,not discharging,60-70,0,1,discharging\n")
+        XCTAssertFalse(status.liveStateColumnMissing)
+        XCTAssertTrue(status.discharging)
+        XCTAssertFalse(status.charging)
+        XCTAssertFalse(status.adapterAttached)
+        XCTAssertTrue(status.lowPowerOn)
+    }
+
+    func testLiveStateCharging() throws {
+        let status = try BatteryStatusParser.parseCSV("80,2:15,enabled,not discharging,,1,1,charging\n")
+        XCTAssertTrue(status.charging)
+        XCTAssertFalse(status.discharging)
+    }
+
+    /// A CLI from v1.3.6 has the adapter and low-power columns but not the
+    /// live state, and the app fills only that one in from pmset.
+    func testLiveStateColumnMissingOnV136() throws {
+        let status = try BatteryStatusParser.parseCSV("71,attached;,disabled,not discharging,80,1,0\n")
+        XCTAssertFalse(status.powerColumnsMissing)
+        XCTAssertTrue(status.liveStateColumnMissing)
+    }
+}
+
+final class LivePowerStateParserTests: XCTestCase {
+    /// Mirrors the battery line shapes pmset actually prints, including the
+    /// tab between the pack's name and its percentage.
+    private func batt(_ line: String) -> String {
+        """
+        Now drawing from 'Battery Power'
+         -InternalBattery-0 (id=7209059)\t\(line) present: true
+        """
+    }
+
+    func testDischargingOnBattery() {
+        XCTAssertEqual(
+            BatteryStatusParser.parseLivePowerState(
+                pmsetBattOutput: batt("65%; discharging; 8:53 remaining")),
+            .discharging)
+    }
+
+    func testCharging() {
+        XCTAssertEqual(
+            BatteryStatusParser.parseLivePowerState(
+                pmsetBattOutput: batt("80%; charging; (no estimate)")),
+            .charging)
+    }
+
+    /// The case a substring match gets wrong: on AC and blocked, pmset says
+    /// "not charging", and the pack is filling nothing.
+    func testBlockedOnACIsIdleNotCharging() {
+        XCTAssertEqual(
+            BatteryStatusParser.parseLivePowerState(
+                pmsetBattOutput: batt("80%; AC attached; not charging")),
+            .idle)
+    }
+
+    /// Full on AC, which is neither of the two states above.
+    func testFullOnACIsIdle() {
+        XCTAssertEqual(
+            BatteryStatusParser.parseLivePowerState(
+                pmsetBattOutput: batt("100%; charged; 0:00 remaining")),
+            .idle)
+    }
+
+    /// A machine with no battery pack at all reports only the power source,
+    /// so there is no state word to find and nothing to claim.
+    func testNoBatteryIsIdle() {
+        XCTAssertEqual(
+            BatteryStatusParser.parseLivePowerState(pmsetBattOutput: "Now drawing from 'AC Power'\n"),
+            .idle)
+        XCTAssertEqual(BatteryStatusParser.parseLivePowerState(pmsetBattOutput: ""), .idle)
     }
 }
 

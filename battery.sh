@@ -4,7 +4,7 @@
 ## Update management
 ## variables are used by this binary as well at the update script
 ## ###############
-BATTERY_CLI_VERSION="v1.3.6"
+BATTERY_CLI_VERSION="v1.3.7"
 
 # If a script may run as root:
 #   - Reset PATH to safe defaults at the very beginning of the script.
@@ -471,6 +471,40 @@ function get_adapter_attached() {
 	else
 		echo "1"
 	fi
+}
+
+# What the pack is doing right now: "charging", "discharging", or "idle".
+#
+# Deliberately not get_smc_charging_status. That reads CH0B/CHTE, the flag
+# CHARGING_ON and CHARGING_OFF write, so it answers "is charging allowed"
+# rather than "is a current flowing" and reports "enabled" on any healthy
+# machine, charging or not. A caller that trusted it drew a charging bolt on
+# a menu bar while the laptop sat unplugged. pmset's own state word is the
+# real-time answer, and it sits on the same line get_battery_percentage
+# already parses:
+#
+#   65%; discharging; 8:53 remaining present: true
+#   80%; charging; (no estimate) present: true
+#   80%; AC attached; not charging present: true
+#   100%; charged; 0:00 remaining present: true
+#
+# Matched as whole words with the negation carried along, because the blocked
+# case contains the charging one: "not charging" is on AC and idle, and a
+# substring match reads it as charging.
+function get_live_power_state() {
+	pmset -g batt | tail -n1 | awk '{
+		previous = ""
+		for (i = 4; i <= NF; i++) {
+			word = $i
+			sub(/;$/, "", word)
+			if (previous != "not" && (word == "charging" || word == "discharging")) {
+				print word
+				exit
+			}
+			previous = word
+		}
+		print "idle"
+	}'
 }
 
 # System-wide Low Power Mode state, as 1 or 0 for machine-readable callers.
@@ -1310,11 +1344,15 @@ fi
 # Status logger in csv format
 if [[ "$action" == "status_csv" ]]; then
 
-	# The last two columns (adapter attached, low power mode) were added in
-	# v1.3.6 so a caller can get the whole picture from one invocation. They
-	# are appended rather than inserted, leaving the first five columns — the
-	# ones every existing consumer reads by position — exactly as they were.
-	echo "$(get_battery_percentage),$(get_remaining_time),$(get_smc_charging_status),$(get_smc_discharging_status),$(get_maintain_percentage),$(get_adapter_attached),$(get_low_power_enabled)"
+	# The last three columns (adapter attached, low power mode, live power
+	# state) were added in v1.3.6 and v1.3.7 so a caller can get the whole
+	# picture from one invocation. They are appended rather than inserted,
+	# leaving the first five columns — the ones every existing consumer reads
+	# by position — exactly as they were.
+	#
+	# Columns 3 and 4 stay the charging *permission* flags they have always
+	# been; column 8 is what says whether the pack is actually moving charge.
+	echo "$(get_battery_percentage),$(get_remaining_time),$(get_smc_charging_status),$(get_smc_discharging_status),$(get_maintain_percentage),$(get_adapter_attached),$(get_low_power_enabled),$(get_live_power_state)"
 
 fi
 

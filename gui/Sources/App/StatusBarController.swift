@@ -214,13 +214,23 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     /// Whether the pack is taking charge right now. In idle and maintain mode
-    /// this follows the adapter: a maintain band parks the pack at its upper
-    /// limit most of the time, and a bolt there would still read as "full".
+    /// this follows the battery itself: a maintain band parks the pack at its
+    /// upper limit most of the time, and a bolt there would still read as
+    /// "full".
+    ///
+    /// The adapter is checked first because nothing charges without one, so a
+    /// status claiming otherwise is wrong — and the bolt is the one glyph that
+    /// has to be right about that. The plug below already separates "on AC"
+    /// from "charging", which leaves a bolt meaning only one thing: a current
+    /// is flowing. A pack that is merely allowed to charge reads "enabled" in
+    /// the CLI's permission flag, and that flag is what put a permanent bolt
+    /// on the bar of a laptop running unplugged.
     private static func isCharging(mode: OperatingMode, status: BatteryStatus?) -> Bool {
         switch mode {
         case .chargingTo:
             return true
         case .idle, .maintaining:
+            guard status?.adapterAttached == true else { return false }
             return status?.charging ?? false
         case .dischargingTo, .calibrating:
             return false

@@ -6,8 +6,20 @@ import Foundation
 public struct BatteryStatus: Equatable, Sendable {
     public var percentage: Int
     public var remainingTime: String
-    public var charging: Bool          // smc charging status: "on"/"off"/...
-    public var discharging: Bool       // actively discharging (adapter blocked)
+    /// Whether the pack is taking charge right now.
+    ///
+    /// This is deliberately *not* the CSV's third column, which comes from
+    /// `CH0B`/`CHTE` — the flag `CHARGING_ON`/`CHARGING_OFF` write. That one
+    /// answers "is charging allowed", so it reads "enabled" on any healthy
+    /// machine, charging or not, and a menu bar that trusted it drew a bolt
+    /// on a laptop running unplugged. What counts is the live-state column
+    /// added in CLI v1.3.7; `ProcessBatteryCLI` re-derives it from pmset when
+    /// the installed CLI is older than that.
+    public var charging: Bool
+    /// Whether the pack is actively losing charge right now — on its own
+    /// power, which is a different thing from being blocked from charging
+    /// with the adapter still plugged in.
+    public var discharging: Bool
     public var maintain: String?       // raw maintain value, e.g. "80", "70-80", "" when off
     public var lowPowerOn: Bool        // macOS Low Power Mode
     /// Whether a power adapter is attached, regardless of whether the pack is
@@ -33,6 +45,11 @@ public struct BatteryStatus: Equatable, Sendable {
     /// itself. Carried on the status so the fallback can be decided from the
     /// parsed line rather than by inspecting the raw output a second time.
     public var powerColumnsMissing: Bool = false
+
+    /// Whether the CLI that produced this status predates v1.3.7 and left the
+    /// live-state column out, which leaves `charging` and `discharging`
+    /// undecided rather than answered.
+    public var liveStateColumnMissing: Bool = false
 
     /// On AC but not charging: the state the system icon draws with a plug.
     public var pluggedInNotCharging: Bool { adapterAttached && !charging }
@@ -75,26 +92,46 @@ public enum BatteryStatusParser {
         guard fields.count >= 4, let percentage = Int(fields[0]) else {
             throw CLIError.parseError("unexpected status_csv output: \(line)")
         }
-        let chargingRaw = fields[2].lowercased()
-        let dischargingRaw = fields[3].lowercased()
         let maintain = fields.count > 4 ? fields[4] : nil
         // Columns 6 and 7 arrived in CLI v1.3.6. Their absence means an older
         // binary is installed, not that the answer is "no": the caller falls
         // back to reading pmset itself when they are missing.
         let adapterAttached = fields.count > 5 ? fields[5] == "1" : false
         let lowPowerOn = fields.count > 6 ? fields[6] == "1" : false
-        // Real CLI output uses "enabled"/"disabled" and "discharging"/"not discharging".
+        // Column 8 arrived in v1.3.7 and supersedes columns 3 and 4 for the
+        // live state: it carries pmset's own state word, where the other two
+        // carry the charging permission flags.
+        let liveState = fields.count > 7 ? fields[7].lowercased() : ""
+        // Columns 3 and 4 say whether charging and discharging are *allowed*.
+        // With no live column to go on, both flags stay off rather than
+        // falling back to them: an unknown state has to read as "not
+        // charging", and defaulting the other way is what put a permanent
+        // bolt on the menu bar. `ProcessBatteryCLI` fills both in from pmset
+        // for a CLI older than v1.3.7.
         var status = BatteryStatus(
             percentage: percentage,
             remainingTime: fields[1],
-            charging: ["on", "yes", "true", "1", "enabled", "charging"].contains(chargingRaw),
-            discharging: ["on", "yes", "true", "1", "enabled", "discharging"].contains(dischargingRaw),
+            charging: liveState == LivePowerState.charging.rawValue,
+            discharging: liveState == LivePowerState.discharging.rawValue,
             maintain: (maintain?.isEmpty == false) ? maintain : nil,
             lowPowerOn: lowPowerOn,
             adapterAttached: adapterAttached
         )
         status.powerColumnsMissing = fields.count <= 6
+        status.liveStateColumnMissing = liveState.isEmpty
         return status
+    }
+
+    /// What the pack is doing right now, as opposed to whether it is allowed
+    /// to. The cases a substring match gets wrong are both here: the pack
+    /// blocked on AC reports "not charging", which contains "charging", and a
+    /// full pack on AC reports "charged", which is neither.
+    public enum LivePowerState: String, Sendable {
+        case charging
+        case discharging
+        /// On AC and not filling, or full, or blocked. Everything that is not
+        /// one of the two states above.
+        case idle
     }
 
     /// Parse the Low Power Mode state from full `pmset -g` output.
@@ -114,6 +151,24 @@ public enum BatteryStatusParser {
     /// the source in the header line ("Now drawing from 'AC Power'").
     public static func parseAdapterAttached(pmsetOutput: String) -> Bool {
         pmsetOutput.contains("AC attached") || pmsetOutput.contains("AC Power")
+    }
+
+    /// Read the live power state out of `pmset -g batt`, matching the CLI's
+    /// own helper so the two agree word for word.
+    public static func parseLivePowerState(pmsetBattOutput: String) -> LivePowerState {
+        for line in pmsetBattOutput.components(separatedBy: "\n") where line.contains("InternalBattery") {
+            var previous = ""
+            for token in line.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == ";" }) {
+                let word = token.lowercased()
+                // `previous` rather than a plain word match, so "not
+                // charging" stays the idle case it is.
+                if previous != "not", let state = LivePowerState(rawValue: word), state != .idle {
+                    return state
+                }
+                previous = word
+            }
+        }
+        return .idle
     }
 
     /// Extract the integer value of a top-level `"Key" = N;` property from

@@ -102,12 +102,24 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
             throw CLIError.commandFailed(exitCode: result.exitCode, output: result.stderr + result.stdout)
         }
         var parsed = try BatteryStatusParser.parseCSV(result.stdout)
-        // CLI v1.3.6 reports the power state in its own output, which saves
-        // the two extra pmset processes this used to spawn on every poll. An
-        // older binary omits those columns, and only then is pmset consulted.
+        // A CLI older than v1.3.7 left out the live-state column, and behind
+        // it the adapter and low-power columns an older one still dropped.
+        // pmset fills the gaps, which is what these two reads are for: the
+        // battery line carries both the live state and the adapter in one go,
+        // and Low Power Mode appears in no other output.
+        //
+        // Without this the live state would default to "not charging" for
+        // every user still on an older CLI, so the bolt would be gone but so
+        // would the plug, and a genuinely charging pack would read as idle.
+        if parsed.liveStateColumnMissing {
+            let batt = Self.pmset(["-g", "batt"])
+            let live = BatteryStatusParser.parseLivePowerState(pmsetBattOutput: batt)
+            parsed.charging = live == .charging
+            parsed.discharging = live == .discharging
+            parsed.adapterAttached = BatteryStatusParser.parseAdapterAttached(pmsetOutput: batt)
+        }
         if parsed.powerColumnsMissing {
             parsed.lowPowerOn = Self.readLowPowerState()
-            parsed.adapterAttached = Self.readAdapterAttached()
         }
         return parsed
     }
@@ -120,19 +132,10 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
         BatteryStatusParser.parseLowPowerMode(pmsetOutput: pmset(["-g"]))
     }
 
-    /// Whether an adapter is attached, from `pmset -g batt`.
-    ///
-    /// Still not derivable from the older five-column `status_csv`, where
-    /// `charging` and `discharging` are both off for a full pack on AC, which
-    /// is the same reading as a pack that is merely idle — only pmset
-    /// distinguishes "plugged in and resting" from "on battery".
-    public static func readAdapterAttached() -> Bool {
-        BatteryStatusParser.parseAdapterAttached(pmsetOutput: pmset(["-g", "batt"]))
-    }
-
     /// Run pmset and return stdout, or "" when it cannot be run. Both pmset
-    /// reads are user-space and cheap; the failure case is simply "unknown",
-    /// which callers treat as "not on AC".
+    /// reads are user-space and cheap, and only a CLI too old to report the
+    /// power state itself reaches them at all. A failure is simply "unknown",
+    /// which callers treat as "not on AC, not charging".
     private static func pmset(_ arguments: [String]) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
