@@ -3,6 +3,7 @@ import BatteryCore
 
 struct SchedulesView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var l10n: Localization
     @State private var taskList: TaskList = TaskList()
     @State private var history: History = History()
     @State private var editingTask: ScheduledTask?
@@ -14,7 +15,7 @@ struct SchedulesView: View {
             List {
                 Section {
                     if taskList.tasks.isEmpty {
-                        Text("No scheduled tasks yet.")
+                        Text(l10n.t("No scheduled tasks yet."))
                             .foregroundStyle(.secondary)
                     }
                     ForEach(taskList.tasks) { task in
@@ -22,24 +23,24 @@ struct SchedulesView: View {
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) { edit(task) }
                             .contextMenu {
-                                Button("Edit…") { edit(task) }
-                                Button("Run Now") { runNow(task) }
+                                Button(l10n.t("Edit…")) { edit(task) }
+                                Button(l10n.t("Run Now")) { runNow(task) }
                                 Divider()
-                                Button("Delete", role: .destructive) { delete(task) }
+                                Button(l10n.t("Delete"), role: .destructive) { delete(task) }
                             }
                     }
                     .onDelete(perform: deleteAt)
                 } header: {
                     HStack {
-                        Text("Tasks")
+                        Text(l10n.t("Tasks"))
                         Spacer()
                         Button { newTask() } label: { Image(systemName: "plus") }
                     }
                 }
 
-                Section("History") {
+                Section(l10n.t("History")) {
                     if history.entries.isEmpty {
-                        Text("No runs yet.")
+                        Text(l10n.t("No runs yet."))
                             .foregroundStyle(.secondary)
                     }
                     ForEach(history.entries.suffix(50).reversed()) { entry in
@@ -90,7 +91,7 @@ struct SchedulesView: View {
 
     private func newTask() {
         editingTask = ScheduledTask(
-            name: "New Task",
+            name: l10n.t("New Task"),
             action: .maintain,
             param: "80",
             schedule: .daily,
@@ -167,11 +168,13 @@ struct SchedulesView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.name)
                     .font(.headline)
-                Text(task.summary)
+                Text(task.localizedSummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let result = task.lastResult, let lastRun = task.lastRun {
-                    Text("Last: \(result == "ok" ? "✓" : "✗ \(result)") · \(lastRun.formatted(date: .abbreviated, time: .shortened))")
+                    Text(l10n.f("Last: %@ · %@",
+                                result == "ok" ? "✓" : "✗ \(result)",
+                                lastRun.formatted(date: .abbreviated, time: .shortened)))
                         .font(.caption2)
                         .foregroundStyle(result == "ok" ? Color.secondary : Color.red)
                         .lineLimit(1)
@@ -193,28 +196,29 @@ struct SchedulesView: View {
 
 private struct TaskEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var l10n: Localization
     @State var task: ScheduledTask
     let onSave: (ScheduledTask) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Schedule Task")
+            Text(l10n.t("Schedule Task"))
                 .font(.title3)
 
             Form {
-                TextField("Name", text: $task.name)
+                TextField(l10n.t("Name"), text: $task.name)
 
-                Picker("Action", selection: $task.action) {
+                Picker(l10n.t("Action"), selection: $task.action) {
                     ForEach(ScheduledTask.Action.allCases, id: \.self) { action in
-                        Text(action.displayName).tag(action)
+                        Text(l10n.t(action.displayName)).tag(action)
                     }
                 }
 
                 actionParamField
 
-                Picker("Repeat", selection: $task.schedule) {
+                Picker(l10n.t("Repeat"), selection: $task.schedule) {
                     ForEach(ScheduledTask.ScheduleType.allCases, id: \.self) { type in
-                        Text(type.displayName).tag(type)
+                        Text(l10n.t(type.displayName)).tag(type)
                     }
                 }
 
@@ -223,11 +227,11 @@ private struct TaskEditorView: View {
                 }
 
                 HStack {
-                    Picker("Hour", selection: $task.hour) {
+                    Picker(l10n.t("Hour"), selection: $task.hour) {
                         ForEach(0..<24, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
                     }
                     Text(":")
-                    Picker("Minute", selection: $task.minute) {
+                    Picker(l10n.t("Minute"), selection: $task.minute) {
                         ForEach([0, 15, 30, 45], id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
                     }
                 }
@@ -236,8 +240,8 @@ private struct TaskEditorView: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Save") {
+                Button(l10n.t("Cancel")) { dismiss() }
+                Button(l10n.t("Save")) {
                     normalize()
                     onSave(task)
                     dismiss()
@@ -255,19 +259,19 @@ private struct TaskEditorView: View {
         switch task.action {
         case .maintain:
             Stepper(value: paramInt, in: 20...100, step: 5) {
-                Text("Limit: \(paramInt.wrappedValue)%")
+                Text(l10n.f("Limit: %d%%", paramInt.wrappedValue))
             }
         case .discharge:
             Stepper(value: paramInt, in: 10...100, step: 5) {
-                Text("Discharge to: \(paramInt.wrappedValue)%")
+                Text(l10n.f("Discharge to: %d%%", paramInt.wrappedValue))
             }
         case .lowpower:
-            Picker("State", selection: Binding(
+            Picker(l10n.t("State"), selection: Binding(
                 get: { task.param.lowercased() == "on" },
                 set: { task.param = $0 ? "on" : "off" }
             )) {
-                Text("On").tag(true)
-                Text("Off").tag(false)
+                Text(l10n.t("On")).tag(true)
+                Text(l10n.t("Off")).tag(false)
             }
         case .topup, .calibrate:
             EmptyView()
@@ -299,9 +303,12 @@ private struct TaskEditorView: View {
 }
 
 private struct WeekdayPicker: View {
+    @EnvironmentObject var l10n: Localization
     @Binding var selected: [Int]
 
-    // Display order: Mon..Sun, values follow launchd (1=Sun … 7=Sat)
+    // Display order: Mon..Sun, values follow launchd (1=Sun … 7=Sat). The
+    // labels are BatteryCore's English abbreviations, which double as the
+    // lookup keys — the table shortens them further where the language wants.
     private let days: [(label: String, value: Int)] = [
         ("Mo", 2), ("Tu", 3), ("We", 4), ("Th", 5), ("Fr", 6), ("Sa", 7), ("Su", 1),
     ]
@@ -310,7 +317,7 @@ private struct WeekdayPicker: View {
         HStack(spacing: 6) {
             ForEach(days, id: \.value) { day in
                 let isOn = selected.contains(day.value)
-                Text(day.label)
+                Text(l10n.t(day.label))
                     .font(.caption)
                     .frame(width: 28, height: 24)
                     .background(isOn ? Color.accentColor : Color.secondary.opacity(0.2), in: RoundedRectangle(cornerRadius: 6))
@@ -324,5 +331,40 @@ private struct WeekdayPicker: View {
                     }
             }
         }
+    }
+}
+
+// MARK: - Localized task text
+
+extension ScheduledTask {
+    /// Localized counterpart of `BatteryCore`'s `summary`.
+    ///
+    /// Composed here instead of translating the finished string because the
+    /// pieces are separate keys: a language is then free to drop the "·"
+    /// separator English uses and to put the time first. BatteryCore keeps its
+    /// English version because that module ships no string tables — the helper
+    /// links it too, and has no UI to translate for.
+    @MainActor
+    var localizedSummary: String {
+        let l10n = Localization.shared
+        let time = String(format: "%02d:%02d", hour, minute)
+        let what: String = switch action {
+        case .maintain: l10n.f("Limit %@%", param)
+        case .topup: l10n.t("Top Up")
+        case .discharge: l10n.f("Discharge to %@%", param)
+        case .calibrate: l10n.t("Calibrate")
+        case .lowpower: l10n.f("Low Power %@", param.lowercased() == "on" ? l10n.t("On") : l10n.t("Off"))
+        }
+        // Built up front: a switch expression only allows a single expression
+        // per branch, so the weekly names cannot be assembled inside one.
+        let weekdayNames = weekdays.sorted()
+            .map { l10n.t(ScheduledTask.weekdayShortName($0)) }
+            .joined(separator: " ")
+        let when: String = switch schedule {
+        case .daily: l10n.f("Daily %@", time)
+        case .weekdays: l10n.f("Weekdays %@", time)
+        case .weekly: "\(weekdayNames) \(time)"
+        }
+        return "\(what) · \(when)"
     }
 }

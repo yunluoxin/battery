@@ -18,6 +18,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private let state: AppState
     private var cancellables = Set<AnyCancellable>()
     private var eventMonitor: Any?
+    /// Shorthand for the shared table, for the few strings this class builds
+    /// outside a view's body.
+    private var l10n: Localization { Localization.shared }
     /// Everything the current icon encodes, so an unchanged poll is a no-op.
     private var renderedKey: IconKey?
     /// The last icon built by the lazy drawing handler, keyed by everything
@@ -33,7 +36,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         popover = NSPopover()
         super.init()
 
-        popover.contentViewController = NSHostingController(rootView: PopoverView().environmentObject(state))
+        popover.contentViewController = NSHostingController(rootView: PopoverView()
+            .environmentObject(state)
+            .environmentObject(Localization.shared))
         popover.behavior = .transient
         popover.delegate = self
 
@@ -61,7 +66,7 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     private func makeStatusItem() -> NSStatusItem {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "battery.100", accessibilityDescription: "Battery")
+            button.image = NSImage(systemSymbolName: "battery.100", accessibilityDescription: l10n.t("Battery"))
             button.action = #selector(statusItemClicked(_:))
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -132,6 +137,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         let lowPower: Bool
         let percentage: Int      // only meaningful when showPercentage is on
         let showPercentage: Bool
+        /// Part of the key because the accessibility description is localized:
+        /// without it, switching language would leave the previous language's
+        /// label on screen until the battery level happened to change.
+        let language: AppLanguage
     }
 
     /// Everything that goes into the pixels of one icon build. `dark` is not
@@ -153,7 +162,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             pluggedIn: Self.isPluggedIn(mode: mode, status: status),
             lowPower: lowPower,
             percentage: showPercentage ? (percentage ?? -1) : -1,
-            showPercentage: showPercentage
+            showPercentage: showPercentage,
+            language: l10n.language
         )
         // Nothing to paint while hidden: skip the whole body so a poll cannot
         // repopulate an item the user just removed.
@@ -165,11 +175,11 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         // empty, so a fill level would flicker rather than inform.
         let image: NSImage?
         if key.calibrating {
-            image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "Battery calibrating")
+            image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: l10n.t("Battery calibrating"))
         } else if key.level >= 0 {
             image = statusImage(level: key.level, charging: key.charging, pluggedIn: key.pluggedIn, tint: lowPower ? .systemYellow : nil)
         } else {
-            image = NSImage(systemSymbolName: "battery.100", accessibilityDescription: "Battery")
+            image = NSImage(systemSymbolName: "battery.100", accessibilityDescription: l10n.t("Battery"))
         }
         button.image = image
         button.title = showPercentage ? (percentage.map { " \($0)%" } ?? "") : ""

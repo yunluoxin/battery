@@ -1,0 +1,116 @@
+/* BatteryKeeper — 简体中文
+ *
+ * 键名即英文原文，缺失的条目会回退成英文，因此新增语言不会让界面出现半吊子
+ * 的键名。文案里带 %@ / %% 的整句都必须翻译，不能只译片段。
+ */
+
+/* MARK: - 通用界面 */
+"General" = "通用";
+"Battery" = "电池";
+"Appearance" = "外观";
+"About" = "关于";
+"System" = "跟随系统";
+"Language" = "语言";
+"Cancel" = "取消";
+"Save" = "保存";
+"Start" = "开始";
+"Stop" = "停止";
+"Quit" = "退出";
+"Settings…" = "设置…";
+"Schedules…" = "计划任务…";
+/* 窗口标题不带省略号 */
+"Schedules" = "计划任务";
+"Status" = "状态";
+"State" = "状态";
+"Name" = "名称";
+"Hour" = "时";
+"Minute" = "分";
+"Unknown" = "未知";
+"Loading…" = "加载中…";
+"Unavailable" = "不可用";
+
+/* MARK: - 通用设置页 */
+"Launch at login" = "登录时启动";
+"Hide status bar icon" = "隐藏菜单栏图标";
+"Show battery percentage in menu bar" = "在菜单栏显示电量百分比";
+"After Charge/Discharge completes:" = "充电/放电完成后：";
+"Resume Maintain mode" = "恢复维持模式";
+"Restore system default" = "恢复系统默认";
+
+/* MARK: - 电池设置页 */
+"Hardware info" = "硬件信息";
+"Restore system default charging" = "恢复系统默认充电设置";
+"Temp" = "温度";
+"Cycles" = "循环次数";
+"MaxCapacity" = "最大容量";
+
+/* MARK: - 关于页 */
+"A menu bar charge limiter wrapping the battery CLI." = "菜单栏充电限制工具，底层调用 battery CLI。";
+"CLI" = "CLI";
+"installed" = "已安装";
+"not installed" = "未安装";
+
+/* MARK: - 菜单栏弹窗 */
+"battery CLI not found" = "未找到 battery CLI";
+"Install with:" = "安装命令：";
+"Charging" = "充电中";
+"On Battery" = "使用电池";
+"Not Charging" = "未充电";
+"Calibrating…" = "校准中…";
+"Power adapter" = "电源适配器";
+"Power adapter connected" = "已接通电源";
+"Maintaining at %@" = "维持 %@";
+"Charging to %d%%" = "充电至 %d%%";
+"Discharging to %d%%" = "放电至 %d%%";
+"Maintain" = "维持充电";
+"Sailing Mode" = "航行模式";
+"Target" = "目标";
+"Charge (Top Up)" = "充电（充满）";
+"Discharge" = "放电";
+"Low Power Mode" = "低电量模式";
+"Calibration" = "校准";
+"In progress…" = "进行中…";
+"Idle" = "空闲";
+/* 菜单栏图标的 VoiceOver 描述 */
+"Battery calibrating" = "电池校准中";
+
+/* MARK: - 计划任务 */
+"Tasks" = "任务";
+"History" = "历史记录";
+"No scheduled tasks yet." = "暂无计划任务。";
+"No runs yet." = "暂无运行记录。";
+"Edit…" = "编辑…";
+"Run Now" = "立即运行";
+"Delete" = "删除";
+"New Task" = "新建任务";
+"Last: %@ · %@" = "上次：%@ · %@";
+"Schedule Task" = "计划任务";
+"Action" = "操作";
+"Repeat" = "重复";
+"Set Charge Limit" = "设置充电上限";
+"Top Up to 100%" = "充至 100%";
+"Discharge To…" = "放电至…";
+"Start Calibration" = "开始校准";
+"Daily" = "每天";
+"Weekdays" = "工作日";
+"Weekly" = "每周";
+"Limit: %d%%" = "上限：%d%%";
+"Discharge to: %d%%" = "放电至：%d%%";
+"On" = "开";
+"Off" = "关";
+"Mo" = "一";
+"Tu" = "二";
+"We" = "三";
+"Th" = "四";
+"Fr" = "五";
+"Sa" = "六";
+"Su" = "日";
+
+/* MARK: - 任务摘要与信息栏 */
+"Limit %@%" = "限制 %@%";
+"Top Up" = "充满";
+"Discharge to %@%" = "放电至 %@%";
+"Calibrate" = "校准";
+"Low Power %@" = "低电量模式 %@";
+"Daily %@" = "每天 %@";
+"Weekdays %@" = "工作日 %@";

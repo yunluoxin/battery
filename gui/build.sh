@@ -72,6 +72,22 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BIN_DIR/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$BIN_DIR/$HELPER_NAME" "$APP_DIR/Contents/MacOS/$HELPER_NAME"
 
+# Translations. Localization resolves a language by asking for its .lproj under
+# Contents/Resources, so each one is copied as a directory rather than
+# flattened into a single file; dropping a new language in is just adding a
+# directory here. See Resources/*/Localizable.strings.
+shopt -s nullglob
+LOCALES=(Resources/*.lproj)
+shopt -u nullglob
+if [[ ${#LOCALES[@]} -eq 0 ]]; then
+  echo "❌ No .lproj directories under Resources — the app would ship untranslated."
+  exit 1
+fi
+for locale in "${LOCALES[@]}"; do
+  cp -R "$locale" "$APP_DIR/Contents/Resources/"
+  echo "🌐 Including ${locale#Resources/}"
+done
+
 cat > "$APP_DIR/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -89,6 +105,10 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
     <string>$APP_VERSION</string>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
+    <!-- Fallback for any string with no translation, and the language macOS
+         treats as the app's own when resolving the bundle's localizations. -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSUIElement</key>

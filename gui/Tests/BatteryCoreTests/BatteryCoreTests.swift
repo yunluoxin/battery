@@ -34,6 +34,8 @@ final class BatteryStatusParserTests: XCTestCase {
         XCTAssertFalse(status.charging)
         XCTAssertFalse(status.discharging)
         XCTAssertEqual(status.maintainRange, MaintainRange(lower: 60, upper: 70))
+        // The word, not a duration — see timeRemaining.
+        XCTAssertNil(status.timeRemaining)
     }
 
     func testRealCLIEnabledFormat() throws {
@@ -248,6 +250,7 @@ final class AppConfigDecodingTests: XCTestCase {
         XCTAssertEqual(config.postCompletion, .resumeMaintain)
         XCTAssertTrue(config.showPercentageInMenuBar)
         XCTAssertFalse(config.hideStatusBarIcon)
+        XCTAssertEqual(config.language, .system)
     }
 
     func testRoundTripKeepsEveryPreference() throws {
@@ -261,6 +264,7 @@ final class AppConfigDecodingTests: XCTestCase {
         original.showPercentageInMenuBar = false
         original.hideStatusBarIcon = true
         original.postCompletion = .restoreDefault
+        original.language = .zh
 
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode(AppConfig.self, from: data), original)
@@ -282,6 +286,104 @@ final class AppConfigDecodingTests: XCTestCase {
         config.setTarget(BatteryCycle.discharge.defaultTarget, for: .discharge)
         XCTAssertEqual(config.chargeTarget, 100)
         XCTAssertEqual(config.dischargeTarget, 40)
+    }
+}
+
+final class AppLanguageTests: XCTestCase {
+    /// A config written by a newer build — or hand-edited — can name a language
+    /// this one does not ship. It must degrade to .system instead of failing
+    /// the whole decode and resetting every other preference with it.
+    func testUnknownLanguageFallsBackToSystem() throws {
+        let json = #"{ "maintainEnabled": true, "language": "kl" }"#
+        let config = try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+        XCTAssertEqual(config.language, .system)
+        XCTAssertTrue(config.maintainEnabled)
+    }
+
+    func testExplicitLanguagesSurviveARoundTrip() throws {
+        for language in [AppLanguage.en, .zh, .system] {
+            var config = AppConfig()
+            config.language = language
+            let data = try JSONEncoder().encode(config)
+            XCTAssertEqual(try JSONDecoder().decode(AppConfig.self, from: data).language, language)
+        }
+    }
+
+    /// `.system` is resolved, never stored: it has to keep following the Mac's
+    /// own language list, including when that list is not English.
+    func testSystemResolvesAgainstThePreferredLanguageList() {
+        XCTAssertEqual(AppLanguage.resolved(.system, languages: ["zh-Hans-CN", "en-US"]), .zh)
+        XCTAssertEqual(AppLanguage.resolved(.system, languages: ["en-GB"]), .en)
+        // Nothing we ship: English rather than an untranslatable language.
+        XCTAssertEqual(AppLanguage.resolved(.system, languages: ["fr-FR", "de-DE"]), .en)
+    }
+
+    /// Only Simplified Chinese ships, so a Traditional Chinese system uses it
+    /// rather than falling back to English the way Bundle's own matching would.
+    func testEveryChineseScriptResolvesToTheShippedTable() {
+        for code in ["zh-Hans", "zh-Hant", "zh-HK", "zh-TW", "zh"] {
+            XCTAssertEqual(AppLanguage.resolved(.system, languages: [code]), .zh,
+                           "\(code) must not fall back to English")
+        }
+    }
+
+    /// An explicit choice ignores the system list entirely — that is the whole
+    /// point of pinning a language.
+    func testExplicitChoiceIgnoresTheSystemList() {
+        XCTAssertEqual(AppLanguage.resolved(.en, languages: ["zh-Hans"]), .en)
+        XCTAssertEqual(AppLanguage.resolved(.zh, languages: ["en-US"]), .zh)
+    }
+
+    func testLprojNamesMatchTheBundledTables() {
+        XCTAssertEqual(AppLanguage.en.lproj, "en")
+        XCTAssertEqual(AppLanguage.zh.lproj, "zh-Hans")
+        XCTAssertNil(AppLanguage.system.lproj, "system resolves before it asks for a table")
+    }
+}
+
+/// `battery status_csv` derives its remaining_time column from `awk '{print
+/// $5}'` over the pmset line, so the column only holds a duration while the
+/// pack is running. On AC it holds a scrap of pmset's prose instead, and that
+/// is the word that used to surface in the UI verbatim.
+final class TimeRemainingTests: XCTestCase {
+    private func status(_ remainingTime: String) -> BatteryStatus {
+        BatteryStatus(percentage: 71, remainingTime: remainingTime, charging: false,
+                      discharging: false, maintain: nil)
+    }
+
+    func testAcceptsClockDurations() {
+        XCTAssertEqual(status("4:11").timeRemaining, "4:11")
+        XCTAssertEqual(status("0:52").timeRemaining, "0:52")
+        XCTAssertEqual(status("0:00").timeRemaining, "0:00")
+        XCTAssertEqual(status("1:02:03").timeRemaining, "1:02:03")
+    }
+
+    /// The actual line on AC: field 5 of "71%; AC attached; not charging".
+    func testRejectsTheACProse() {
+        XCTAssertNil(status("attached;").timeRemaining)
+    }
+
+    /// Any other word awk lands on for the same column.
+    func testRejectsOtherWords() {
+        for word in ["not", "charging", "discharging;", "calculating", "AC", "-"] {
+            XCTAssertNil(status(word).timeRemaining, "\(word) is not a duration")
+        }
+    }
+
+    func testRejectsEmptyAndMalformed() {
+        XCTAssertNil(status("").timeRemaining)
+        XCTAssertNil(status("   ").timeRemaining)
+        XCTAssertNil(status(":").timeRemaining)
+        XCTAssertNil(status("4:").timeRemaining)
+        XCTAssertNil(status(":11").timeRemaining)
+        XCTAssertNil(status("4::11").timeRemaining)
+        XCTAssertNil(status("4:1a").timeRemaining)
+        XCTAssertNil(status("4:11:22:33").timeRemaining)
+    }
+
+    /// Surrounding whitespace is how the value arrives from the CSV column.
+    func testTrimsSurroundingWhitespace() {
+        XCTAssertEqual(status(" 4:11 ").timeRemaining, "4:11")
     }
 }
 

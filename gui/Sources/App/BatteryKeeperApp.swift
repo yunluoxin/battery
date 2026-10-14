@@ -13,10 +13,15 @@ struct BatteryKeeperApp: App {
         Settings {
             SettingsView()
                 .environmentObject(state)
+                .environmentObject(Localization.shared)
         }
-        Window("Schedules", id: "schedules") {
+        // The title comes from the table rather than a LocalizedStringKey so it
+        // follows the chosen language. A scene title is fixed when the scene is
+        // created, so this one updates on the next launch, not on the switch.
+        Window(Text(Localization.shared.t("Schedules")), id: "schedules") {
             SchedulesView()
                 .environmentObject(state)
+                .environmentObject(Localization.shared)
         }
         .defaultSize(width: 560, height: 420)
     }
@@ -41,7 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if panelWindow == nil {
             let window = NSWindow(
                 contentViewController: NSHostingController(
-                    rootView: SettingsView().environmentObject(AppState.shared)
+                    rootView: SettingsView()
+                        .environmentObject(AppState.shared)
+                        .environmentObject(Localization.shared)
                 )
             )
             window.title = "BatteryKeeper"

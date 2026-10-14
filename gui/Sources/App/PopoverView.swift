@@ -3,6 +3,7 @@ import BatteryCore
 
 struct PopoverView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var l10n: Localization
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
@@ -35,10 +36,10 @@ struct PopoverView: View {
     private var cliBanner: some View {
         if !state.cliAvailable {
             VStack(alignment: .leading, spacing: 6) {
-                Label("battery CLI not found", systemImage: "exclamationmark.triangle.fill")
+                Label(l10n.t("battery CLI not found"), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.yellow)
                     .font(.headline)
-                Text("Install with:")
+                Text(l10n.t("Install with:"))
                     .font(.caption)
                 HStack {
                     Text("curl -s https://raw.githubusercontent.com/actuallymentor/battery/main/setup.sh | bash")
@@ -87,23 +88,28 @@ struct PopoverView: View {
     private var statusHeadline: String {
         switch state.mode {
         case .idle:
-            guard let s = state.status else { return "Unknown" }
-            return s.charging ? "Charging" : (s.discharging ? "On Battery" : "Not Charging")
+            guard let s = state.status else { return l10n.t("Unknown") }
+            return s.charging ? l10n.t("Charging") : (s.discharging ? l10n.t("On Battery") : l10n.t("Not Charging"))
         case .maintaining(let range):
-            return "Maintaining at \(range.displayValue)"
+            return l10n.f("Maintaining at %@", range.displayValue)
         case .chargingTo(let target):
-            return "Charging to \(target)%"
+            return l10n.f("Charging to %d%%", target)
         case .dischargingTo(let target):
-            return "Discharging to \(target)%"
+            return l10n.f("Discharging to %d%%", target)
         case .calibrating:
-            return "Calibrating…"
+            return l10n.t("Calibrating…")
         }
     }
 
+    /// The headline already says whether the pack is charging, on battery or
+    /// idle, so this only fills in the detail: the countdown when there is one,
+    /// otherwise that the adapter is what it is plugged into.
     private var statusSubline: String {
         guard let s = state.status else { return "" }
-        let time = s.remainingTime.isEmpty ? "" : " · \(s.remainingTime)"
-        return "Power adapter\(time)"
+        // `timeRemaining`, not `remainingTime`: on AC the raw field holds
+        // pmset's word "attached;" rather than a duration.
+        if let time = s.timeRemaining { return time }
+        return l10n.t("Power adapter")
     }
 
     // MARK: Maintain
@@ -111,7 +117,7 @@ struct PopoverView: View {
     private var maintainSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Maintain")
+                Text(l10n.t("Maintain"))
                     .font(.headline)
                 Spacer()
                 Text(maintainLabel)
@@ -135,7 +141,7 @@ struct PopoverView: View {
             .onChange(of: sliderLower) { _, _ in applyRange() }
             .onChange(of: sliderUpper) { _, _ in applyRange() }
 
-            Toggle("Sailing Mode", isOn: Binding(
+            Toggle(l10n.t("Sailing Mode"), isOn: Binding(
                 get: { state.config.sailingEnabled },
                 set: { newValue in
                     state.setSailing(enabled: newValue)
@@ -177,7 +183,7 @@ struct PopoverView: View {
     private var cycleSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Target")
+                Text(l10n.t("Target"))
                     .font(.headline)
                 Spacer()
                 Text("\(state.cycleTarget)%")
@@ -193,21 +199,21 @@ struct PopoverView: View {
             ))
                 .disabled(!state.cliAvailable || state.mode == .calibrating)
 
-            Toggle("Charge (Top Up)", isOn: Binding(
+            Toggle(l10n.t("Charge (Top Up)"), isOn: Binding(
                 get: { state.config.chargeActive },
                 set: { state.setCharge(active: $0) }
             ))
             .toggleStyle(.switch)
             .disabled(!state.cliAvailable || state.mode == .calibrating)
 
-            Toggle("Discharge", isOn: Binding(
+            Toggle(l10n.t("Discharge"), isOn: Binding(
                 get: { state.config.dischargeActive },
                 set: { state.setDischarge(active: $0) }
             ))
             .toggleStyle(.switch)
             .disabled(!state.cliAvailable || state.mode == .calibrating)
 
-            Toggle("Low Power Mode", isOn: Binding(
+            Toggle(l10n.t("Low Power Mode"), isOn: Binding(
                 get: { state.effectiveLowPower },
                 set: { state.setLowPower($0) }
             ))
@@ -221,17 +227,17 @@ struct PopoverView: View {
     private var calibrationSection: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Calibration")
+                Text(l10n.t("Calibration"))
                     .font(.headline)
-                Text(state.calibrating ? "In progress…" : "Idle")
+                Text(state.calibrating ? l10n.t("In progress…") : l10n.t("Idle"))
                     .font(.caption)
                     .foregroundStyle(state.calibrating ? .orange : .secondary)
             }
             Spacer()
             if state.calibrating {
-                Button("Stop") { state.stopCalibration() }
+                Button(l10n.t("Stop")) { state.stopCalibration() }
             } else {
-                Button("Start") { state.startCalibration() }
+                Button(l10n.t("Start")) { state.startCalibration() }
                     .disabled(!state.cliAvailable)
             }
         }
@@ -245,7 +251,7 @@ struct PopoverView: View {
                 openWindow(id: "schedules")
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
-                Label("Schedules…", systemImage: "clock")
+                Label(l10n.t("Schedules…"), systemImage: "clock")
             }
             .buttonStyle(.borderless)
 
@@ -253,13 +259,13 @@ struct PopoverView: View {
                 openSettings()
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
-                Label("Settings…", systemImage: "gear")
+                Label(l10n.t("Settings…"), systemImage: "gear")
             }
             .buttonStyle(.borderless)
 
             Spacer()
 
-            Button("Quit") {
+            Button(l10n.t("Quit")) {
                 NSApp.terminate(nil)
             }
             .buttonStyle(.borderless)

@@ -3,45 +3,54 @@ import BatteryCore
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var l10n: Localization
     @State private var selection: SettingsTab = .general
 
     var body: some View {
         TabView(selection: $selection) {
             GeneralSettingsView()
-                .tabItem { Label("General", systemImage: "gear") }
+                .tabItem { Label(l10n.t("General"), systemImage: "gear") }
                 .tag(SettingsTab.general)
             BatterySettingsView()
-                .tabItem { Label("Battery", systemImage: "battery.100") }
+                .tabItem { Label(l10n.t("Battery"), systemImage: "battery.100") }
                 .tag(SettingsTab.battery)
+            AppearanceSettingsView()
+                .tabItem { Label(l10n.t("Appearance"), systemImage: "paintbrush") }
+                .tag(SettingsTab.appearance)
             AboutSettingsView()
-                .tabItem { Label("About", systemImage: "info.circle") }
+                .tabItem { Label(l10n.t("About"), systemImage: "info.circle") }
                 .tag(SettingsTab.about)
         }
         .frame(width: 440, height: 300)
+        // Re-injected for the tab's contents, same as `state` below. This
+        // panel itself gets both from its call sites — the Settings scene and
+        // the standalone main panel in AppDelegate.showPanel().
         .environmentObject(state)
+        .environmentObject(l10n)
     }
 }
 
 private enum SettingsTab: Hashable {
-    case general, battery, about
+    case general, battery, appearance, about
 }
 
 private struct GeneralSettingsView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var l10n: Localization
 
     var body: some View {
         Form {
-            Toggle("Launch at login", isOn: Binding(
+            Toggle(l10n.t("Launch at login"), isOn: Binding(
                 get: { state.config.launchAtLogin },
                 set: { state.setLaunchAtLogin($0) }
             ))
 
-            Toggle("Hide status bar icon", isOn: Binding(
+            Toggle(l10n.t("Hide status bar icon"), isOn: Binding(
                 get: { state.config.hideStatusBarIcon },
                 set: { state.setHideStatusBarIcon($0) }
             ))
 
-            Toggle("Show battery percentage in menu bar", isOn: Binding(
+            Toggle(l10n.t("Show battery percentage in menu bar"), isOn: Binding(
                 get: { state.config.showPercentageInMenuBar },
                 set: {
                     state.config.showPercentageInMenuBar = $0
@@ -49,7 +58,7 @@ private struct GeneralSettingsView: View {
                 }
             ))
 
-            Picker("After Charge/Discharge completes:", selection: Binding(
+            Picker(l10n.t("After Charge/Discharge completes:"), selection: Binding(
                 get: { state.config.postCompletion },
                 set: {
                     state.config.postCompletion = $0
@@ -57,7 +66,9 @@ private struct GeneralSettingsView: View {
                 }
             )) {
                 ForEach(PostCompletionBehavior.allCases, id: \.self) { behavior in
-                    Text(behavior.displayName).tag(behavior)
+                    // BatteryCore's displayName is the English text, which is
+                    // also the lookup key.
+                    Text(l10n.t(behavior.displayName)).tag(behavior)
                 }
             }
         }
@@ -68,19 +79,21 @@ private struct GeneralSettingsView: View {
 
 private struct BatterySettingsView: View {
     @EnvironmentObject var state: AppState
-    @State private var batteryInfo: String = "Loading…"
+    @EnvironmentObject var l10n: Localization
+    /// Nil until the ioreg read finishes; the view shows a placeholder instead.
+    @State private var batteryInfo: String?
 
     var body: some View {
         Form {
-            LabeledContent("Status") {
-                Text(state.status.map { "\($0.percentage)%, \($0.remainingTime)" } ?? "Unknown")
+            LabeledContent(l10n.t("Status")) {
+                Text(statusSummary)
             }
-            LabeledContent("Hardware info") {
-                Text(batteryInfo)
+            LabeledContent(l10n.t("Hardware info")) {
+                Text(batteryInfo ?? l10n.t("Loading…"))
                     .font(.callout.monospaced())
                     .multilineTextAlignment(.trailing)
             }
-            Button("Restore system default charging") {
+            Button(l10n.t("Restore system default charging")) {
                 state.restoreDefaults()
             }
             .disabled(!state.cliAvailable)
@@ -90,7 +103,27 @@ private struct BatterySettingsView: View {
         .onAppear(perform: loadBatteryInfo)
     }
 
+    /// Percentage plus whatever else is worth saying about it: the countdown
+    /// while the pack is running, or the adapter state when it is not. The CLI
+    /// puts pmset's own wording in that slot on AC (`attached;`), which is why
+    /// this goes through `timeRemaining` rather than `remainingTime`.
+    private var statusSummary: String {
+        guard let status = state.status else { return l10n.t("Unknown") }
+        if let time = status.timeRemaining {
+            return "\(status.percentage)%, \(time)"
+        }
+        guard status.adapterAttached else { return "\(status.percentage)%" }
+        return "\(status.percentage)%, \(l10n.t("Power adapter connected"))"
+    }
+
     private func loadBatteryInfo() {
+        // Snapshot the labels before leaving the main actor: the parse runs in
+        // a detached task, and the user may switch language while it is in
+        // flight, in which case only the labels captured here would be stale.
+        let tempLabel = l10n.t("Temp")
+        let cyclesLabel = l10n.t("Cycles")
+        let capacityLabel = l10n.t("MaxCapacity")
+        let unavailable = l10n.t("Unavailable")
         Task.detached(priority: .utility) {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
@@ -104,19 +137,44 @@ private struct BatterySettingsView: View {
             let cycles = BatteryStatusParser.parseIORegInt("CycleCount", from: output).map(String.init)
             let maxCap = BatteryStatusParser.parseIORegInt("MaxCapacity", from: output).map(String.init)
             let parts = [
-                temp.map { "Temp \($0)" },
-                cycles.map { "Cycles \($0)" },
-                maxCap.map { "MaxCapacity \($0)%" },
+                temp.map { "\(tempLabel) \($0)" },
+                cycles.map { "\(cyclesLabel) \($0)" },
+                maxCap.map { "\(capacityLabel) \($0)%" },
             ].compactMap { $0 }
+            let summary = parts.isEmpty ? unavailable : parts.joined(separator: " · ")
             await MainActor.run {
-                batteryInfo = parts.isEmpty ? "Unavailable" : parts.joined(separator: " · ")
+                batteryInfo = summary
             }
         }
     }
 }
 
+/// How the app looks: currently only the language. Appearance preferences that
+/// need a choice of their own (light / dark / system) land here too, which is
+/// why this is a tab rather than another row on General.
+private struct AppearanceSettingsView: View {
+    @EnvironmentObject var state: AppState
+    @EnvironmentObject var l10n: Localization
+
+    var body: some View {
+        Form {
+            Picker(l10n.t("Language"), selection: Binding(
+                get: { state.config.language },
+                set: { state.setLanguage($0) }
+            )) {
+                ForEach(AppLanguage.allCases, id: \.self) { language in
+                    Text(language.displayName).tag(language)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
 private struct AboutSettingsView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var l10n: Localization
     @State private var cliVersion: String = "…"
 
     var body: some View {
@@ -126,11 +184,11 @@ private struct AboutSettingsView: View {
                 .foregroundStyle(.green)
             Text("BatteryKeeper")
                 .font(.title2)
-            Text("A menu bar charge limiter wrapping the battery CLI.")
+            Text(l10n.t("A menu bar charge limiter wrapping the battery CLI."))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            LabeledContent("CLI") {
-                Text(state.cliAvailable ? cliVersion : "not installed")
+            LabeledContent(l10n.t("CLI")) {
+                Text(state.cliAvailable ? cliVersion : l10n.t("not installed"))
                     .foregroundStyle(state.cliAvailable ? Color.primary : Color.red)
             }
             .padding(.horizontal, 40)
@@ -141,11 +199,12 @@ private struct AboutSettingsView: View {
 
     private func loadCLIVersion() {
         Task {
+            let installed = l10n.t("installed")
             if let result = try? await state.cli.run(["--version"]), result.succeeded {
                 let v = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                await MainActor.run { cliVersion = v.isEmpty ? "installed" : v }
+                await MainActor.run { cliVersion = v.isEmpty ? installed : v }
             } else {
-                await MainActor.run { cliVersion = "installed" }
+                await MainActor.run { cliVersion = installed }
             }
         }
     }

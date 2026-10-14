@@ -32,6 +32,30 @@ public struct BatteryStatus: Equatable, Sendable {
         guard let maintain, !maintain.isEmpty, maintain != "off" else { return nil }
         return MaintainRange(cliValue: maintain)
     }
+
+    /// The countdown, or nil when the CLI reported no duration.
+    ///
+    /// `battery status_csv` fills that column with `awk '{print $5}'` over the
+    /// `pmset -g batt` line, which only lines up with a duration while the pack
+    /// is running:
+    ///
+    ///     71%; discharging; 4:11 remaining present: true   → "4:11"
+    ///     71%; AC attached; not charging present: true     → "attached;"
+    ///
+    /// So on AC the field holds a scrap of pmset's own prose. That word is not
+    /// a duration and must not reach the UI as one — callers show the adapter
+    /// state instead.
+    public var timeRemaining: String? {
+        let trimmed = remainingTime.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        // H:MM, or H:MM:SS for the longer estimates. Anything containing a
+        // non-digit is prose, not a clock.
+        let parts = trimmed.split(separator: ":", omittingEmptySubsequences: false)
+        guard (2...3).contains(parts.count),
+              parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) })
+        else { return nil }
+        return trimmed
+    }
 }
 
 public enum BatteryStatusParser {
@@ -190,6 +214,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
     /// Remove the menu bar item entirely instead of drawing it with an empty
     /// icon. Default false, i.e. the icon is shown (current behaviour).
     public var hideStatusBarIcon: Bool = false
+    /// UI language. `.system` is the default so a fresh install follows the
+    /// Mac's own language list without the user visiting Settings first.
+    public var language: AppLanguage = .system
 
     public init() {}
 
@@ -212,6 +239,10 @@ public struct AppConfig: Codable, Equatable, Sendable {
         launchAtLogin = get(.launchAtLogin, false)
         showPercentageInMenuBar = get(.showPercentageInMenuBar, true)
         hideStatusBarIcon = get(.hideStatusBarIcon, false)
+        // An unknown raw value (a language this build does not ship, written by
+        // a newer one) decodes to nil and lands on .system rather than
+        // throwing away the rest of the config with it.
+        language = get(.language, .system)
     }
 
     /// The range sent to the CLI: the full sailing band when sailing is on,

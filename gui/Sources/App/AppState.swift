@@ -32,6 +32,10 @@ final class AppState: ObservableObject {
         // Seed the low-power state immediately so the menu bar badge and the
         // toggle are correct before the first full status poll completes.
         self.lowPowerOn = ProcessBatteryCLI.readLowPowerState()
+        // Here rather than in start(): this runs before any window exists, so
+        // the very first frame is drawn in the user's language instead of
+        // flashing English and then switching.
+        Localization.shared.load(from: config)
     }
 
     /// The low-power state shown in the UI: always the real system state.
@@ -163,6 +167,15 @@ final class AppState: ObservableObject {
     }
 
     // MARK: Actions
+
+    /// Switch UI language and persist it. The change is applied in place:
+    /// `Localization` is in the SwiftUI environment, so open windows redraw
+    /// instead of waiting for a relaunch.
+    func setLanguage(_ language: AppLanguage) {
+        config.language = language
+        saveConfig()
+        Localization.shared.setLanguage(language)
+    }
 
     func setMaintain(enabled: Bool) {
         config.maintainEnabled = enabled
