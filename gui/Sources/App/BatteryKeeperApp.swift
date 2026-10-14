@@ -27,41 +27,79 @@ struct BatteryKeeperApp: App {
     }
 }
 
+/// Fires the SwiftUI `openSettings` action on behalf of `AppDelegate`.
+///
+/// The `Settings` scene's window can only be opened from inside SwiftUI: the
+/// AppKit selectors do not reach it (`showSettingsWindow:` reports success but
+/// opens nothing) and AppKit will not reopen a scene for an app it believes has
+/// nothing open. So this view is hosted in an off-screen window purely to get
+/// the environment action, and it throws that window away immediately after.
+private struct SettingsOpener: View {
+    @Environment(\.openSettings) private var openSettings
+    /// Runs right after the open is dispatched, once the panel exists.
+    let onOpened: () -> Void
+    @State private var fired = false
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                // An off-screen hosting view can still see `onAppear` more than
+                // once; opening twice in a row is harmless but not free, and the
+                // guard keeps it to one call.
+                guard !fired else { return }
+                fired = true
+                openSettings()
+                // After the open, not before it: an agent app is not activated by
+                // opening a window, so activating any earlier leaves the panel
+                // behind whatever the user was working in. See `showPanel`.
+                onOpened()
+            }
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusBar: StatusBarController?
 
-    /// The standalone main panel. It is built on demand rather than declared as
-    /// a SwiftUI `Settings` scene because the system will not reopen a scene
-    /// for an app it considers to have nothing open, which is exactly the state
-    /// a hidden menu bar icon puts this app in.
-    private var panelWindow: NSWindow?
+    /// The off-screen host for `SettingsOpener`, held only until the open
+    /// action has been dispatched. It is never shown, so the panel it opens is
+    /// the `Settings` scene's own window — titled after the current tab and
+    /// wearing the same toolbar chrome as the one `openSettings()` gives from
+    /// the menu bar popover.
+    private var settingsOpenerWindow: NSWindow?
 
-    /// Show the main panel, creating the window on first use.
+    /// Open the settings panel, the app's only entry point while the menu bar
+    /// icon is hidden.
     ///
-    /// Kept as one reusable window: reopening after a close must not stack a
-    /// second copy, and the panel is the app's only entry point while the menu
-    /// bar icon is hidden, so losing it would strand the preference.
+    /// Opening goes through `SettingsOpener` rather than a hand-built window of
+    /// our own: hosting `SettingsView` in a plain `NSWindow` gives an untitled
+    /// bar with the tabs crammed into a toolbar, which is not the settings UI
+    /// anywhere else in this app. The scene's window is reused by AppKit, so
+    /// reopening after a close re-focuses it instead of stacking a second copy.
+    ///
+    /// Activation is deliberately sequenced *after* the open: `openSettings()`
+    /// only reaches the scene from the hosting view's `onAppear`, so nothing is on
+    /// screen yet while this method runs. Activating at that point has no window
+    /// to front, and the panel then comes up behind whatever the user was working
+    /// in with its traffic lights greyed out — hence the closure above.
     func showPanel() {
-        if panelWindow == nil {
-            let window = NSWindow(
-                contentViewController: NSHostingController(
-                    rootView: SettingsView()
-                        .environmentObject(AppState.shared)
-                        .environmentObject(Localization.shared)
-                )
-            )
-            window.title = "BatteryKeeper"
-            window.styleMask = [.titled, .closable, .miniaturizable]
-            // Closed, not deallocated: the window is reused on the next reopen.
-            window.isReleasedWhenClosed = false
-            window.center()
-            panelWindow = window
+        if settingsOpenerWindow == nil {
+            // No style mask and never ordered front: this window exists only to
+            // host the view that fires `openSettings()`.
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsOpener {
+                // An agent app is not activated by opening a window, so this is
+                // what brings the panel to the front at all.
+                NSApp.activate(ignoringOtherApps: true)
+            }))
+            window.styleMask = []
+            window.orderOut(nil)
+            settingsOpenerWindow = window
         }
-        // An agent app is not activated by showing a window on its own, so the
-        // panel would open behind whatever the user was working in.
-        NSApp.activate(ignoringOtherApps: true)
-        panelWindow?.makeKeyAndOrderFront(nil)
+        // Releasing the opener on the next turn is what lets the next open host a
+        // fresh `SettingsOpener`; a spent one has already fired and would not
+        // fire again.
+        DispatchQueue.main.async { self.settingsOpenerWindow = nil }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -97,7 +135,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// as a launch-at-login agent it has no dock icon, and tapping its
     /// Launchpad icon with no windows open reaches AppKit's reopen path rather
     /// than a second launch. Returning `false` stops AppKit from also trying its
-    /// own default handling, which for this app means nothing.
+    /// own default handling, which for this app means nothing: it does not
+    /// reopen a scene for an app it believes has nothing open, which is the
+    /// whole reason `showPanel` has to do it.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         showPanel()
         return false
