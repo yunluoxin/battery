@@ -5,9 +5,15 @@ import Combine
 
 /// Owns the NSStatusItem and routes left click → popover, right click →
 /// toggle Low Power Mode.
+///
+/// The item is created and removed as the "Hide status bar icon" preference
+/// flips; while hidden there is no item at all, not an empty one.
 @MainActor
 final class StatusBarController: NSObject, NSPopoverDelegate {
-    private let statusItem: NSStatusItem
+    /// Nil while the icon is hidden: the item is removed from the status bar
+    /// rather than left in place with an empty image, so it takes no space and
+    /// leaves no gap in the bar.
+    private var statusItem: NSStatusItem?
     private let popover: NSPopover
     private let state: AppState
     private var cancellables = Set<AnyCancellable>()
@@ -17,10 +23,13 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     /// The last icon built by the lazy drawing handler, keyed by everything
     /// that goes into it.
     private var iconCache: (style: IconStyle, image: NSImage)?
+    /// The latest icon inputs, replayed onto a status item created after the
+    /// app started, so a freshly restored icon paints now rather than sitting
+    /// blank until the next poll.
+    private var latestIconState: (mode: OperatingMode, lowPower: Bool, status: BatteryStatus?, showPercentage: Bool)?
 
     init(state: AppState) {
         self.state = state
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         popover = NSPopover()
         super.init()
 
@@ -28,20 +37,63 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         popover.behavior = .transient
         popover.delegate = self
 
-        if let button = statusItem.button {
+        // Update the icon when relevant state changes.
+        Publishers.CombineLatest4(state.$mode, state.$lowPowerOn, state.$status, state.$config)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] mode, lowPower, status, config in
+                guard let self else { return }
+                self.latestIconState = (mode, lowPower, status, config.showPercentageInMenuBar)
+                self.updateIcon(mode: mode, lowPower: lowPower, status: status, showPercentage: config.showPercentageInMenuBar)
+            }
+            .store(in: &cancellables)
+
+        // Add or remove the menu bar item as the preference flips. This also
+        // fires once on subscribe, which is what creates the item at launch.
+        state.$config
+            .map(\.hideStatusBarIcon)
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] hidden in self?.setStatusItemHidden(hidden) }
+            .store(in: &cancellables)
+    }
+
+    /// Create a status item wired up for left/right click routing.
+    private func makeStatusItem() -> NSStatusItem {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = item.button {
             button.image = NSImage(systemSymbolName: "battery.100", accessibilityDescription: "Battery")
             button.action = #selector(statusItemClicked(_:))
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+        return item
+    }
 
-        // Update the icon when relevant state changes.
-        Publishers.CombineLatest4(state.$mode, state.$lowPowerOn, state.$status, state.$config)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] mode, lowPower, status, config in
-                self?.updateIcon(mode: mode, lowPower: lowPower, status: status, showPercentage: config.showPercentageInMenuBar)
+    /// Show or hide the menu bar item.
+    ///
+    /// The item is removed from the status bar rather than left in place with
+    /// an empty image, so hiding it frees the space instead of leaving a gap.
+    /// The app stays an accessory with no dock icon either way: Launchpad still
+    /// lists it, and tapping it while it runs reopens the main panel — see
+    /// `AppDelegate.applicationShouldHandleReopen`.
+    private func setStatusItemHidden(_ hidden: Bool) {
+        if hidden {
+            // The popover is anchored to the button that is about to go away.
+            popover.performClose(nil)
+            renderedKey = nil
+            if let item = statusItem {
+                NSStatusBar.system.removeStatusItem(item)
+                statusItem = nil
             }
-            .store(in: &cancellables)
+        } else if statusItem == nil {
+            statusItem = makeStatusItem()
+            // A new item has never been painted, so force the next update
+            // through instead of waiting for state to drift.
+            renderedKey = nil
+            if let latest = latestIconState {
+                updateIcon(mode: latest.mode, lowPower: latest.lowPower, status: latest.status, showPercentage: latest.showPercentage)
+            }
+        }
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
@@ -100,6 +152,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             percentage: showPercentage ? (percentage ?? -1) : -1,
             showPercentage: showPercentage
         )
+        // Nothing to paint while hidden: skip the whole body so a poll cannot
+        // repopulate an item the user just removed.
+        guard let button = statusItem?.button else { return }
         guard key != renderedKey else { return }
         renderedKey = key
 
@@ -113,8 +168,8 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
         } else {
             image = NSImage(systemSymbolName: "battery.100", accessibilityDescription: "Battery")
         }
-        statusItem.button?.image = image
-        statusItem.button?.title = showPercentage ? (percentage.map { " \($0)%" } ?? "") : ""
+        button.image = image
+        button.title = showPercentage ? (percentage.map { " \($0)%" } ?? "") : ""
     }
 
     /// The icon is drawn in explicit black/white rather than as a template

@@ -326,6 +326,17 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: Menu bar icon
+
+    /// Hide or restore the menu bar item. StatusBarController watches
+    /// `config.hideStatusBarIcon` and adds or removes the item, so persisting
+    /// the flag is the whole action — it also survives a restart, which is what
+    /// keeps a hidden icon hidden across launches.
+    func setHideStatusBarIcon(_ hidden: Bool) {
+        config.hideStatusBarIcon = hidden
+        saveConfig()
+    }
+
     // MARK: Launch at login
 
     func setLaunchAtLogin(_ enabled: Bool) {

@@ -36,6 +36,11 @@ private struct GeneralSettingsView: View {
                 set: { state.setLaunchAtLogin($0) }
             ))
 
+            Toggle("Hide status bar icon", isOn: Binding(
+                get: { state.config.hideStatusBarIcon },
+                set: { state.setHideStatusBarIcon($0) }
+            ))
+
             Toggle("Show battery percentage in menu bar", isOn: Binding(
                 get: { state.config.showPercentageInMenuBar },
                 set: {

@@ -171,6 +171,9 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var launchAtLogin: Bool = false
     /// Show the battery percentage next to the menu bar icon.
     public var showPercentageInMenuBar: Bool = true
+    /// Remove the menu bar item entirely instead of drawing it with an empty
+    /// icon. Default false, i.e. the icon is shown (current behaviour).
+    public var hideStatusBarIcon: Bool = false
 
     public init() {}
 
@@ -192,6 +195,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         postCompletion = get(.postCompletion, .resumeMaintain)
         launchAtLogin = get(.launchAtLogin, false)
         showPercentageInMenuBar = get(.showPercentageInMenuBar, true)
+        hideStatusBarIcon = get(.hideStatusBarIcon, false)
     }
 
     /// The range sent to the CLI: the full sailing band when sailing is on,

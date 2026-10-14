@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import BatteryCore
 
@@ -21,8 +22,40 @@ struct BatteryKeeperApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusBar: StatusBarController?
+
+    /// The standalone main panel. It is built on demand rather than declared as
+    /// a SwiftUI `Settings` scene because the system will not reopen a scene
+    /// for an app it considers to have nothing open, which is exactly the state
+    /// a hidden menu bar icon puts this app in.
+    private var panelWindow: NSWindow?
+
+    /// Show the main panel, creating the window on first use.
+    ///
+    /// Kept as one reusable window: reopening after a close must not stack a
+    /// second copy, and the panel is the app's only entry point while the menu
+    /// bar icon is hidden, so losing it would strand the preference.
+    func showPanel() {
+        if panelWindow == nil {
+            let window = NSWindow(
+                contentViewController: NSHostingController(
+                    rootView: SettingsView().environmentObject(AppState.shared)
+                )
+            )
+            window.title = "BatteryKeeper"
+            window.styleMask = [.titled, .closable, .miniaturizable]
+            // Closed, not deallocated: the window is reused on the next reopen.
+            window.isReleasedWhenClosed = false
+            window.center()
+            panelWindow = window
+        }
+        // An agent app is not activated by showing a window on its own, so the
+        // panel would open behind whatever the user was working in.
+        NSApp.activate(ignoringOtherApps: true)
+        panelWindow?.makeKeyAndOrderFront(nil)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Agent app: no dock icon, and closing windows must not quit the app.
@@ -49,6 +82,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppState.shared.stop()
+    }
+
+    /// Re-opening from Launchpad while the app is already running.
+    ///
+    /// With the menu bar icon hidden this is the *only* way back into the app:
+    /// as a launch-at-login agent it has no dock icon, and tapping its
+    /// Launchpad icon with no windows open reaches AppKit's reopen path rather
+    /// than a second launch. Returning `false` stops AppKit from also trying its
+    /// own default handling, which for this app means nothing.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showPanel()
+        return false
     }
 
     /// The menu bar app is long-running: closing the Settings or Schedules

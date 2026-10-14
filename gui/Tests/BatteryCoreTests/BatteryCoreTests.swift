@@ -204,6 +204,7 @@ final class AppConfigDecodingTests: XCTestCase {
         XCTAssertEqual(config.chargeTarget, 100)
         XCTAssertEqual(config.postCompletion, .resumeMaintain)
         XCTAssertTrue(config.showPercentageInMenuBar)
+        XCTAssertFalse(config.hideStatusBarIcon)
     }
 
     func testRoundTripKeepsEveryPreference() throws {
@@ -215,6 +216,7 @@ final class AppConfigDecodingTests: XCTestCase {
         original.dischargeTarget = 40
         original.launchAtLogin = true
         original.showPercentageInMenuBar = false
+        original.hideStatusBarIcon = true
         original.postCompletion = .restoreDefault
 
         let data = try JSONEncoder().encode(original)
