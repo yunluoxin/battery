@@ -48,7 +48,8 @@
 
 /* MARK: - 关于页 */
 "A menu bar charge limiter wrapping the battery CLI." = "菜单栏充电限制工具，底层调用 battery CLI。";
-"CLI" = "CLI";
+"CLI %@" = "CLI %@";
+"App v%@" = "App v%@";
 "installed" = "已安装";
 "not installed" = "未安装";
 

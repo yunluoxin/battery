@@ -21,10 +21,13 @@ struct SettingsView: View {
                 .tabItem { Label(l10n.t("About"), systemImage: "info.circle") }
                 .tag(SettingsTab.about)
         }
+        // Fixed content size: the Settings scene sizes its window around this,
+        // so it is what gives the panel its dimensions on both entry paths.
         .frame(width: 440, height: 300)
-        // Re-injected for the tab's contents, same as `state` below. This
-        // panel itself gets both from its call sites — the Settings scene and
-        // the standalone main panel in AppDelegate.showPanel().
+        // Re-injected for the tab's contents. This view is only ever the root
+        // of the Settings scene now — AppDelegate.showPanel() opens that scene
+        // rather than hosting a window of its own — so the scene is the one
+        // call site, and it passes both in.
         .environmentObject(state)
         .environmentObject(l10n)
     }
@@ -210,14 +213,24 @@ private struct AboutSettingsView: View {
             Text(l10n.t("A menu bar charge limiter wrapping the battery CLI."))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            LabeledContent(l10n.t("CLI")) {
-                Text(state.cliAvailable ? cliVersion : l10n.t("not installed"))
+            // Each row is one self-contained centered line — "CLI v1.3.5" and
+            // "App v1.0.0" each sit on their own centre, not split into a
+            // label column and a value column.
+            VStack(spacing: 4) {
+                Text(l10n.f("CLI %@", cliVersionText))
                     .foregroundStyle(state.cliAvailable ? Color.primary : Color.red)
+                Text(l10n.f("App v%@", AppVersion.current))
             }
-            .padding(.horizontal, 40)
         }
         .padding()
         .onAppear(perform: loadCLIVersion)
+    }
+
+    /// What the CLI line reads: the reported version, or the same
+    /// "not installed" wording the panel used before, in the CLI's own red.
+    private var cliVersionText: String {
+        guard state.cliAvailable else { return l10n.t("not installed") }
+        return cliVersion
     }
 
     private func loadCLIVersion() {

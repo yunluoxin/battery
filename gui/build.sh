@@ -26,7 +26,7 @@ ARCH="arm64"
 # Version reported in Info.plist and used in the DMG filename. Override with
 # APP_VERSION=1.2.3 ./build.sh — the old script had this hardcoded in the
 # heredoc, where it was easy to ship a stale number.
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_VERSION="${APP_VERSION:-1.0.0}"
 
 OUT_DIR="build"
 MAKE_DMG=false
