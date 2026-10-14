@@ -62,6 +62,7 @@
 "Calibrating…" = "校准中…";
 "Power adapter" = "电源适配器";
 "Power adapter connected" = "已接通电源";
+"%@ remaining" = "还能使用 %@";
 "Maintaining at %@" = "维持 %@";
 "Charging to %d%%" = "充电至 %d%%";
 "Discharging to %d%%" = "放电至 %d%%";

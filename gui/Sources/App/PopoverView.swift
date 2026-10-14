@@ -102,13 +102,15 @@ struct PopoverView: View {
     }
 
     /// The headline already says whether the pack is charging, on battery or
-    /// idle, so this only fills in the detail: the countdown when there is one,
-    /// otherwise that the adapter is what it is plugged into.
+    /// idle, so this only fills in the detail: how long the pack has left when
+    /// there is a countdown, otherwise that the adapter is what it is plugged
+    /// into. A bare "8:43" says nothing on its own — the word is what tells the
+    /// user it is time and not, say, a charge count.
     private var statusSubline: String {
         guard let s = state.status else { return "" }
         // `timeRemaining`, not `remainingTime`: on AC the raw field holds
         // pmset's word "attached;" rather than a duration.
-        if let time = s.timeRemaining { return time }
+        if let time = s.timeRemaining { return l10n.f("%@ remaining", time) }
         return l10n.t("Power adapter")
     }
 

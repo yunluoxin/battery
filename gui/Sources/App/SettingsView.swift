@@ -132,11 +132,13 @@ private struct BatterySettingsView: View {
     /// Percentage plus whatever else is worth saying about it: the countdown
     /// while the pack is running, or the adapter state when it is not. The CLI
     /// puts pmset's own wording in that slot on AC (`attached;`), which is why
-    /// this goes through `timeRemaining` rather than `remainingTime`.
+    /// this goes through `timeRemaining` rather than `remainingTime`. The
+    /// countdown is labelled rather than bare, for the same reason as the
+    /// popover: "71%, 4:11" leaves the reader to guess what 4:11 measures.
     private var statusSummary: String {
         guard let status = state.status else { return l10n.t("Unknown") }
         if let time = status.timeRemaining {
-            return "\(status.percentage)%, \(time)"
+            return "\(status.percentage)%, \(l10n.f("%@ remaining", time))"
         }
         guard status.adapterAttached else { return "\(status.percentage)%" }
         return "\(status.percentage)%, \(l10n.t("Power adapter connected"))"
