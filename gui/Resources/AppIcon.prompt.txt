@@ -1,0 +1,18 @@
+Generated with the built-in imagegen tool. The final PNG is normalized to 1024 x 1024 for macOS icon packaging.
+
+Initial prompt:
+
+Use case: logo-brand.
+Asset type: production macOS application icon for BatteryKeeper, an app that limits battery charging to preserve battery health.
+Primary request: create one extremely minimal, polished, distinctive app icon, a 1024 x 1024 square PNG.
+Composition: a single warm off-white rounded-square macOS icon tile, centered and occupying about 84% of the canvas width, generous smooth continuous corner curves. Outside the tile is genuinely transparent. Inside the tile, one bold, perfectly centered horizontal battery pictogram, with a short terminal on its right. The battery has a thick dark graphite outline, gently rounded corners and one solid soft emerald-green charge block occupying 80% of its interior, leaving a clearly visible empty area on the right. The battery symbol is large and optically balanced, approximately 60% of tile width and 32% of tile height, readable at 16px. Consistent stroke weight and mathematically clean geometric edges.
+Style: understated flat vector-like minimalism; off-white, graphite and green only; no texture, no gradients, no glossy materials, no bevels, no 3D. The battery shape and 80% charge communicate the whole idea.
+Constraints: show only one finished icon, straight-on, no mockup or device. No text, letters, digits, lightning bolt, leaf, shield, extra symbols, watermark, decorative border or checkerboard. Actual transparent pixels around the rounded tile.
+
+Refinement prompt (applied to the initial generated image):
+
+Use case: precise-object-edit.
+Asset type: final production macOS app icon.
+Edit this icon to clean its silhouette and flatten its colors. Keep the exact concept, visual proportions, layout and palette: warm off-white rounded square, dark graphite horizontal battery with emerald green charge filling about 80%. Preserve actual transparency around the tile.
+Critical correction: the current image has tiny stray white and colored flecks in transparent space, especially on the right of the tile, plus ragged tile edges. REMOVE ALL these speckles, dirt and isolated pixels. Reconstruct a perfectly smooth, anti-aliased, continuous rounded-square silhouette with pristine transparency outside. Make the three filled colors completely uniform, without grain, shadows, brush marks or gradients. Clean precise vector-like geometry. No other changes, no extra objects, text or symbols. Output one square app icon at 1024 x 1024 with actual transparency.
+

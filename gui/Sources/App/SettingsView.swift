@@ -207,9 +207,11 @@ private struct AboutSettingsView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "battery.100.bolt")
-                .font(.system(size: 44))
-                .foregroundStyle(.green)
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 64, height: 64)
+                .accessibilityHidden(true)
             Text("BatteryKeeper")
                 .font(.title2)
             Text(l10n.t("A menu bar charge limiter wrapping the battery CLI."))

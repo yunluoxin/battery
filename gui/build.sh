@@ -72,6 +72,17 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BIN_DIR/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "$BIN_DIR/$HELPER_NAME" "$APP_DIR/Contents/MacOS/$HELPER_NAME"
 
+ICONSET="$OUT_DIR/AppIcon.iconset"
+mkdir -p "$ICONSET"
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" Resources/AppIcon.png \
+    --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+  sips -z "$((size * 2))" "$((size * 2))" Resources/AppIcon.png \
+    --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP_DIR/Contents/Resources/AppIcon.icns"
+rm -rf "$ICONSET"
+
 # Translations. Localization resolves a language by asking for its .lproj under
 # Contents/Resources, so each one is copied as a directory rather than
 # flattened into a single file; dropping a new language in is just adding a
@@ -105,6 +116,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
     <string>$APP_VERSION</string>
     <key>CFBundleExecutable</key>
     <string>$APP_NAME</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <!-- Fallback for any string with no translation, and the language macOS
          treats as the app's own when resolving the bundle's localizations. -->
     <key>CFBundleDevelopmentRegion</key>
