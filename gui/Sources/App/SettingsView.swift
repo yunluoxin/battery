@@ -80,6 +80,11 @@ private struct GeneralSettingsView: View {
                 set: { state.setAutoLowPower($0) }
             ))
 
+            Toggle(l10n.t("Scheduled task notifications"), isOn: Binding(
+                get: { state.config.scheduledTaskNotifications },
+                set: { state.setScheduledTaskNotifications($0) }
+            ))
+
             // The level the rule fires at. Hidden rather than greyed out while
             // the rule is off: with nothing for the number to modify, a
             // disabled stepper is just a row to read past.
@@ -99,7 +104,7 @@ private struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .padding()
+        .padding(.horizontal)
     }
 }
 

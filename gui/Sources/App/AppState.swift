@@ -416,6 +416,24 @@ final class AppState: ObservableObject {
         }
     }
 
+    func setScheduledTaskNotifications(_ enabled: Bool) {
+        guard enabled else {
+            config.scheduledTaskNotifications = false
+            saveConfig()
+            return
+        }
+        Task {
+            do {
+                config.scheduledTaskNotifications = try await ScheduledTaskNotifications.requestAuthorization()
+                saveConfig()
+            } catch {
+                config.scheduledTaskNotifications = false
+                saveConfig()
+                show(error)
+            }
+        }
+    }
+
     func startCalibration() {
         Task {
             do {

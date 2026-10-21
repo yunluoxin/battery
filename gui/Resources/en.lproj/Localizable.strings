@@ -1,8 +1,16 @@
 /* BatteryKeeper — English strings.
  *
- * Intentionally empty. Keys are the English text, and Localization.t() falls
- * back to the key itself, so English needs no entries to render correctly.
- * This file exists so that en.lproj is a real localization in the bundle:
- * the language picker resolves it by path, and macOS reads the directory to
- * work out which languages the app ships.
+ * Most English keys fall back to their source text. New keys are mirrored here
+ * so every shipped localization table stays complete.
  */
+"Scheduled task notifications" = "Scheduled task notifications";
+"Charge to target…" = "Charge to target…";
+"Charge to: %d%%" = "Charge to: %d%%";
+"Charge to %@%%" = "Charge to %@%%";
+"Once" = "Once";
+"Once %@" = "Once %@";
+"Run once at" = "Run once at";
+"Choose a date" = "Choose a date";
+"Choose a future date and time." = "Choose a future date and time.";
+"Unable to Schedule Task" = "Unable to Schedule Task";
+"OK" = "OK";

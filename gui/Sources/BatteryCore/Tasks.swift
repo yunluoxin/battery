@@ -4,7 +4,7 @@ import Foundation
 public struct ScheduledTask: Codable, Equatable, Identifiable, Sendable {
     public enum Action: String, Codable, CaseIterable, Sendable {
         case maintain        // set charge limit (param = "80" or "70-80")
-        case topup           // charge to 100 once
+        case topup           // charge to param % (defaults to 100 for older tasks)
         case discharge       // discharge to param %
         case calibrate       // start calibration cycle
         case lowpower        // toggle low power mode (param = "on"/"off")
@@ -12,7 +12,7 @@ public struct ScheduledTask: Codable, Equatable, Identifiable, Sendable {
         public var displayName: String {
             switch self {
             case .maintain: "Set Charge Limit"
-            case .topup: "Top Up to 100%"
+            case .topup: "Charge to target…"
             case .discharge: "Discharge To…"
             case .calibrate: "Start Calibration"
             case .lowpower: "Low Power Mode"
@@ -24,12 +24,14 @@ public struct ScheduledTask: Codable, Equatable, Identifiable, Sendable {
         case daily
         case weekdays        // Mon-Fri
         case weekly          // specific weekdays, see weekdays array
+        case once
 
         public var displayName: String {
             switch self {
             case .daily: "Daily"
             case .weekdays: "Weekdays"
             case .weekly: "Weekly"
+            case .once: "Once"
             }
         }
     }
@@ -40,6 +42,8 @@ public struct ScheduledTask: Codable, Equatable, Identifiable, Sendable {
     /// Action parameter: percentage ("80"), range ("70-80"), or "on"/"off" for lowpower.
     public var param: String
     public var schedule: ScheduleType
+    /// For `.once`: the local date and time of the run.
+    public var runAt: Date?
     public var hour: Int
     public var minute: Int
     /// For .weekly: weekdays 1=Sun … 7=Sat (launchd convention). Multiple allowed.
@@ -54,6 +58,7 @@ public struct ScheduledTask: Codable, Equatable, Identifiable, Sendable {
         action: Action,
         param: String = "",
         schedule: ScheduleType,
+        runAt: Date? = nil,
         hour: Int,
         minute: Int,
         weekdays: [Int] = [],
@@ -66,6 +71,7 @@ public struct ScheduledTask: Codable, Equatable, Identifiable, Sendable {
         self.action = action
         self.param = param
         self.schedule = schedule
+        self.runAt = runAt
         self.hour = hour
         self.minute = minute
         self.weekdays = weekdays
@@ -86,10 +92,13 @@ public struct ScheduledTask: Codable, Equatable, Identifiable, Sendable {
         case .weekly:
             let names = weekdays.sorted().map { Self.weekdayShortName($0) }.joined(separator: " ")
             when = "\(names) \(time)"
+        case .once:
+            when = "Once \(runAt?.formatted(date: .abbreviated, time: .shortened) ?? "Choose a date")"
         }
+        let topupTarget = Int(param) ?? 100
         let what: String = switch action {
         case .maintain: "Limit \(param)%"
-        case .topup: "Top Up"
+        case .topup: topupTarget == 100 ? "Top Up" : "Charge to \(topupTarget)%"
         case .discharge: "Discharge to \(param)%"
         case .calibrate: "Calibrate"
         case .lowpower: "Low Power \(param)"

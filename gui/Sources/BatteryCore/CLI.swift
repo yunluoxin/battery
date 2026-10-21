@@ -22,9 +22,16 @@ public protocol BatteryCLI: Sendable {
     func status() async throws -> BatteryStatus
     /// Run an arbitrary battery command with arguments, e.g. ["maintain", "80"].
     func run(_ arguments: [String]) async throws -> CLIResult
+    /// Run a scheduled action to completion, including charge/discharge tasks
+    /// that the interactive GUI normally launches in the background.
+    func runScheduledAction(_ arguments: [String]) async throws -> CLIResult
 }
 
 extension BatteryCLI {
+    public func runScheduledAction(_ arguments: [String]) async throws -> CLIResult {
+        try await run(arguments)
+    }
+
     @discardableResult
     public func maintain(_ range: MaintainRange) async throws -> CLIResult {
         try await run(["maintain", range.cliValue])
@@ -68,8 +75,9 @@ extension BatteryCLI {
 
 /// Concrete implementation that shells out to /usr/local/bin/battery.
 ///
-/// Process completion is observed via `terminationHandler` (event-driven,
-/// no blocking waits) so it composes cleanly with Swift concurrency.
+/// Short process completion is polled off the main actor so it composes cleanly
+/// with Swift concurrency; scheduled battery cycles use the same runner without
+/// a timeout so their recorded result reflects the final target outcome.
 ///
 /// Some subcommands (charge, discharge, calibrate) run in the foreground
 /// until the target percentage is reached, which can take hours. They are
@@ -156,6 +164,14 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
         return try await runToCompletion(arguments)
     }
 
+    public func runScheduledAction(_ arguments: [String]) async throws -> CLIResult {
+        guard cliExists else { throw CLIError.cliNotFound }
+        guard Self.isLongRunning(arguments) else {
+            return try await run(arguments)
+        }
+        return try await runToCompletion(arguments, timeout: nil)
+    }
+
     /// Fire and forget: the CLI keeps running in the background and enforces
     /// the target itself. Output goes to the GUI log so it stays inspectable.
     private func spawnDetached(_ arguments: [String]) throws -> CLIResult {
@@ -186,7 +202,7 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
     /// of a pipe and keeps it open forever, so pipe-based capture never sees
     /// EOF and hangs. File-based capture is immune — the daemon closes and
     /// reopens its own descriptors after forking.
-    private func runToCompletion(_ arguments: [String]) async throws -> CLIResult {
+    private func runToCompletion(_ arguments: [String], timeout: TimeInterval? = 60) async throws -> CLIResult {
         try? StateDirectory.ensureExists()
         let outURL = StateDirectory.url.appendingPathComponent("cli-out-\(UUID().uuidString).log")
         FileManager.default.createFile(atPath: outURL.path, contents: nil)
@@ -203,13 +219,15 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
         // Poll for completion on a background thread. Process.terminationHandler
         // proved unreliable in this helper's context (handlers occasionally never
         // fire when the child spawns daemon grandchildren), so we poll isRunning
-        // with a hard timeout instead.
+        // with a timeout instead. Scheduled charge/discharge/calibration calls
+        // opt out because their duration depends on the battery and target.
         let pid = process.processIdentifier
         let exitCode: Int32 = await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
-                let deadline = Date().addingTimeInterval(60)
-                while process.isRunning && Date() < deadline {
-                    Thread.sleep(forTimeInterval: 0.1)
+                let deadline = timeout.map { Date().addingTimeInterval($0) }
+                let pollInterval = timeout == nil ? 1.0 : 0.1
+                while process.isRunning && (deadline == nil || Date() < deadline!) {
+                    Thread.sleep(forTimeInterval: pollInterval)
                 }
                 if process.isRunning {
                     process.terminate()

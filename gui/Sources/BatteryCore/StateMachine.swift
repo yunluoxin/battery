@@ -18,11 +18,11 @@ public enum TaskExecutor {
             case .maintain:
                 result = try await cli.run(["maintain", task.param])
             case .topup:
-                result = try await cli.charge(to: 100)
+                result = try await cli.runScheduledAction(["charge", String(Int(task.param) ?? 100)])
             case .discharge:
-                result = try await cli.discharge(to: Int(task.param) ?? 80)
+                result = try await cli.runScheduledAction(["discharge", String(Int(task.param) ?? 80)])
             case .calibrate:
-                result = try await cli.calibrate()
+                result = try await cli.runScheduledAction(["calibrate"])
             case .lowpower:
                 result = try await cli.setLowPower(task.param.lowercased() == "on")
             }
@@ -30,7 +30,8 @@ public enum TaskExecutor {
             return (false, String(describing: error), note)
         }
         let output = (result.stdout + result.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (result.succeeded, output.isEmpty ? "exit \(result.exitCode)" : String(output.prefix(500)), note)
+        let detail = output.isEmpty ? "exit \(result.exitCode)" : String(output.suffix(500))
+        return (result.succeeded, detail, note)
     }
 }
 

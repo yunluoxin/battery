@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import BatteryCore
+import UserNotifications
 
 @main
 struct BatteryKeeperApp: App {
@@ -59,7 +60,7 @@ private struct SettingsOpener: View {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var statusBar: StatusBarController?
 
     /// The off-screen host for `SettingsOpener`, held only until the open
@@ -105,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Agent app: no dock icon, and closing windows must not quit the app.
         NSApp.setActivationPolicy(.accessory)
+        UNUserNotificationCenter.current().delegate = self
         // Close any window the Settings/Window scenes restored on launch so
         // the app starts as a bare menu bar item. The status item's window is
         // never in NSApp.windows at this point, so this is safe here (unlike
@@ -147,6 +149,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window must never quit it; only the explicit Quit action does.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 
     private func isAppleSilicon() -> Bool {

@@ -7,6 +7,7 @@ struct SchedulesView: View {
     @State private var taskList: TaskList = TaskList()
     @State private var history: History = History()
     @State private var editingTask: ScheduledTask?
+    @State private var scheduleError: String?
 
     private var helperPath: String { LaunchdManager.currentHelperPath }
 
@@ -75,6 +76,14 @@ struct SchedulesView: View {
                 save(saved)
             }
         }
+        .alert(l10n.t("Unable to Schedule Task"), isPresented: Binding(
+            get: { scheduleError != nil },
+            set: { if !$0 { scheduleError = nil } }
+        )) {
+            Button(l10n.t("OK")) { scheduleError = nil }
+        } message: {
+            Text(scheduleError ?? "")
+        }
         .onAppear(perform: reload)
     }
 
@@ -95,6 +104,7 @@ struct SchedulesView: View {
             action: .maintain,
             param: "80",
             schedule: .daily,
+            runAt: Calendar.current.date(byAdding: .hour, value: 1, to: Date()),
             hour: 9,
             minute: 0,
             weekdays: [2]
@@ -106,13 +116,25 @@ struct SchedulesView: View {
     }
 
     private func save(_ task: ScheduledTask) {
+        guard !task.enabled || task.schedule != .once || (task.runAt.map { $0 > Date() } ?? false) else {
+            scheduleError = l10n.t("Choose a future date and time.")
+            return
+        }
         if let index = taskList.tasks.firstIndex(where: { $0.id == task.id }) {
             taskList.tasks[index] = task
         } else {
             taskList.tasks.append(task)
         }
         persist()
-        reinstall(task)
+        do {
+            try reinstall(task)
+        } catch {
+            scheduleError = localizedScheduleError(error)
+            if let index = taskList.tasks.firstIndex(where: { $0.id == task.id }) {
+                taskList.tasks[index].enabled = false
+                persist()
+            }
+        }
         reload()
     }
 
@@ -136,19 +158,32 @@ struct SchedulesView: View {
         taskList.tasks[index].enabled = enabled
         persist()
         if enabled {
-            reinstall(taskList.tasks[index])
+            do {
+                try reinstall(taskList.tasks[index])
+            } catch {
+                taskList.tasks[index].enabled = false
+                scheduleError = localizedScheduleError(error)
+                persist()
+            }
         } else {
             LaunchdManager.uninstall(taskID: task.id)
         }
         reload()
     }
 
-    private func reinstall(_ task: ScheduledTask) {
+    private func reinstall(_ task: ScheduledTask) throws {
         guard task.enabled else {
             LaunchdManager.uninstall(taskID: task.id)
             return
         }
-        try? LaunchdManager.install(task: task, helperPath: helperPath)
+        try LaunchdManager.install(task: task, helperPath: helperPath)
+    }
+
+    private func localizedScheduleError(_ error: Error) -> String {
+        if let cliError = error as? CLIError, case .parseError = cliError {
+            return l10n.t("Choose a future date and time.")
+        }
+        return String(describing: error)
     }
 
     private func runNow(_ task: ScheduledTask) {
@@ -156,7 +191,7 @@ struct SchedulesView: View {
         Task.detached {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = ["--task", task.id.uuidString]
+            process.arguments = ["--task", task.id.uuidString, "--force"]
             try? process.run()
             process.waitUntilExit()
             await MainActor.run { reload() }
@@ -187,6 +222,7 @@ struct SchedulesView: View {
             ))
             .toggleStyle(.switch)
             .labelsHidden()
+            .disabled(!task.enabled && task.schedule == .once && (task.runAt ?? .distantPast) <= Date())
         }
         .padding(.vertical, 2)
     }
@@ -208,7 +244,13 @@ private struct TaskEditorView: View {
             Form {
                 TextField(l10n.t("Name"), text: $task.name)
 
-                Picker(l10n.t("Action"), selection: $task.action) {
+                Picker(l10n.t("Action"), selection: Binding(
+                    get: { task.action },
+                    set: { action in
+                        if action == .topup && task.action != .topup { task.param = "100" }
+                        task.action = action
+                    }
+                )) {
                     ForEach(ScheduledTask.Action.allCases, id: \.self) { action in
                         Text(l10n.t(action.displayName)).tag(action)
                     }
@@ -216,9 +258,27 @@ private struct TaskEditorView: View {
 
                 actionParamField
 
-                Picker(l10n.t("Repeat"), selection: $task.schedule) {
+                Picker(l10n.t("Repeat"), selection: Binding(
+                    get: { task.schedule },
+                    set: { schedule in
+                        task.schedule = schedule
+                        if schedule == .once && task.runAt == nil {
+                            task.runAt = Calendar.current.date(byAdding: .hour, value: 1, to: Date())
+                        }
+                    }
+                )) {
                     ForEach(ScheduledTask.ScheduleType.allCases, id: \.self) { type in
                         Text(l10n.t(type.displayName)).tag(type)
+                    }
+                }
+
+                if task.schedule == .once {
+                    DatePicker(l10n.t("Run once at"), selection: runAtBinding,
+                               displayedComponents: [.date, .hourAndMinute])
+                    if task.enabled && (task.runAt.map({ $0 <= Date() }) ?? true) {
+                        Text(l10n.t("Choose a future date and time."))
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
                 }
 
@@ -226,13 +286,15 @@ private struct TaskEditorView: View {
                     WeekdayPicker(selected: $task.weekdays)
                 }
 
-                HStack {
-                    Picker(l10n.t("Hour"), selection: $task.hour) {
-                        ForEach(0..<24, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
-                    }
-                    Text(":")
-                    Picker(l10n.t("Minute"), selection: $task.minute) {
-                        ForEach([0, 15, 30, 45], id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
+                if task.schedule != .once {
+                    HStack {
+                        Picker(l10n.t("Hour"), selection: $task.hour) {
+                            ForEach(0..<24, id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
+                        }
+                        Text(":")
+                        Picker(l10n.t("Minute"), selection: $task.minute) {
+                            ForEach([0, 15, 30, 45], id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
+                        }
                     }
                 }
             }
@@ -247,11 +309,18 @@ private struct TaskEditorView: View {
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(task.name.isEmpty || (task.schedule == .weekly && task.weekdays.isEmpty))
+                .disabled(task.name.isEmpty ||
+                          (task.schedule == .weekly && task.weekdays.isEmpty) ||
+                          (task.enabled && task.schedule == .once && (task.runAt.map { $0 <= Date() } ?? true)))
             }
         }
         .padding()
         .frame(width: 380)
+        .onAppear {
+            if task.schedule == .once && task.runAt == nil {
+                task.runAt = Calendar.current.date(byAdding: .hour, value: 1, to: Date())
+            }
+        }
     }
 
     @ViewBuilder
@@ -265,6 +334,10 @@ private struct TaskEditorView: View {
             Stepper(value: paramInt, in: 10...100, step: 5) {
                 Text(l10n.f("Discharge to: %d%%", paramInt.wrappedValue))
             }
+        case .topup:
+            Stepper(value: paramInt, in: 20...100, step: 5) {
+                Text(l10n.f("Charge to: %d%%", paramInt.wrappedValue))
+            }
         case .lowpower:
             Picker(l10n.t("State"), selection: Binding(
                 get: { task.param.lowercased() == "on" },
@@ -273,19 +346,29 @@ private struct TaskEditorView: View {
                 Text(l10n.t("On")).tag(true)
                 Text(l10n.t("Off")).tag(false)
             }
-        case .topup, .calibrate:
+        case .calibrate:
             EmptyView()
         }
     }
 
     private var paramInt: Binding<Int> {
         Binding(
-            get: { Int(task.param) ?? 80 },
+            get: { Int(task.param) ?? (task.action == .topup ? 100 : 80) },
             set: { task.param = String($0) }
         )
     }
 
+    private var runAtBinding: Binding<Date> {
+        Binding(
+            get: { task.runAt ?? Calendar.current.date(byAdding: .hour, value: 1, to: Date()) ?? Date() },
+            set: { task.runAt = $0 }
+        )
+    }
+
     private func normalize() {
+        if task.schedule == .once, let runAt = task.runAt {
+            task.runAt = Calendar.current.dateInterval(of: .minute, for: runAt)?.start ?? runAt
+        }
         switch task.action {
         case .maintain:
             if Int(task.param) == nil { task.param = "80" }
@@ -293,7 +376,9 @@ private struct TaskEditorView: View {
             if Int(task.param) == nil { task.param = "80" }
         case .lowpower:
             if task.param.lowercased() != "on" && task.param.lowercased() != "off" { task.param = "on" }
-        case .topup, .calibrate:
+        case .topup:
+            task.param = String(min(max(Int(task.param) ?? 100, 20), 100))
+        case .calibrate:
             task.param = ""
         }
         if task.schedule == .weekly && task.weekdays.isEmpty {
@@ -350,7 +435,7 @@ extension ScheduledTask {
         let time = String(format: "%02d:%02d", hour, minute)
         let what: String = switch action {
         case .maintain: l10n.f("Limit %@%", param)
-        case .topup: l10n.t("Top Up")
+        case .topup: l10n.f("Charge to %@%", param.isEmpty ? "100" : param)
         case .discharge: l10n.f("Discharge to %@%", param)
         case .calibrate: l10n.t("Calibrate")
         case .lowpower: l10n.f("Low Power %@", param.lowercased() == "on" ? l10n.t("On") : l10n.t("Off"))
@@ -360,10 +445,12 @@ extension ScheduledTask {
         let weekdayNames = weekdays.sorted()
             .map { l10n.t(ScheduledTask.weekdayShortName($0)) }
             .joined(separator: " ")
+        let scheduledDate = runAt?.formatted(date: .abbreviated, time: .shortened) ?? l10n.t("Choose a date")
         let when: String = switch schedule {
         case .daily: l10n.f("Daily %@", time)
         case .weekdays: l10n.f("Weekdays %@", time)
         case .weekly: "\(weekdayNames) \(time)"
+        case .once: l10n.f("Once %@", scheduledDate)
         }
         return "\(what) · \(when)"
     }

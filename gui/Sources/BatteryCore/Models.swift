@@ -308,6 +308,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var chargeActive: Bool = false
     public var dischargeActive: Bool = false
     public var postCompletion: PostCompletionBehavior = .resumeMaintain
+    /// Scheduled task results are opt-in because macOS asks for notification permission.
+    public var scheduledTaskNotifications: Bool = false
     public var launchAtLogin: Bool = false
     /// Show the battery percentage next to the menu bar icon.
     public var showPercentageInMenuBar: Bool = true
@@ -342,6 +344,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         chargeActive = get(.chargeActive, false)
         dischargeActive = get(.dischargeActive, false)
         postCompletion = get(.postCompletion, .resumeMaintain)
+        scheduledTaskNotifications = get(.scheduledTaskNotifications, false)
         launchAtLogin = get(.launchAtLogin, false)
         showPercentageInMenuBar = get(.showPercentageInMenuBar, true)
         hideStatusBarIcon = get(.hideStatusBarIcon, false)

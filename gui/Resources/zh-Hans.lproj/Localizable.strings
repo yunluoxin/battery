@@ -35,6 +35,7 @@
 "Show battery percentage in menu bar" = "在菜单栏显示电量百分比";
 "After Charge/Discharge completes:" = "充电/放电完成后：";
 "Auto Low Power Mode" = "低电量时自动开启低电量模式";
+"Scheduled task notifications" = "计划任务完成时通知";
 "When the battery is below:" = "电量低于：";
 "Resume Maintain mode" = "恢复维持模式";
 "Restore system default" = "恢复系统默认";
@@ -92,14 +93,23 @@
 "Action" = "操作";
 "Repeat" = "重复";
 "Set Charge Limit" = "设置充电上限";
+"Charge to target…" = "充电至…";
 "Top Up to 100%" = "充至 100%";
 "Discharge To…" = "放电至…";
 "Start Calibration" = "开始校准";
 "Daily" = "每天";
 "Weekdays" = "工作日";
 "Weekly" = "每周";
+"Once" = "仅一次";
+"Run once at" = "执行时间";
+"Choose a date" = "选择日期";
+"Once %@" = "一次：%@";
+"Choose a future date and time." = "请选择未来的日期和时间。";
+"Unable to Schedule Task" = "无法创建计划任务";
+"OK" = "好";
 "Limit: %d%%" = "上限：%d%%";
 "Discharge to: %d%%" = "放电至：%d%%";
+"Charge to: %d%%" = "充电至：%d%%";
 "On" = "开";
 "Off" = "关";
 "Mo" = "一";
@@ -113,6 +123,7 @@
 /* MARK: - 任务摘要与信息栏 */
 "Limit %@%" = "限制 %@%";
 "Top Up" = "充满";
+"Charge to %@%%" = "充电至 %@%%";
 "Discharge to %@%" = "放电至 %@%";
 "Calibrate" = "校准";
 "Low Power %@" = "低电量模式 %@";

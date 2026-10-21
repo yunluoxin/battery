@@ -21,6 +21,15 @@ public enum LaunchdManager {
             return (2...6).map { ["Weekday": $0, "Hour": task.hour, "Minute": task.minute] }
         case .weekly:
             return task.weekdays.sorted().map { ["Weekday": $0, "Hour": task.hour, "Minute": task.minute] }
+        case .once:
+            guard let runAt = task.runAt else { return [] }
+            let calendar = Calendar.current
+            return [[
+                "Month": calendar.component(.month, from: runAt),
+                "Day": calendar.component(.day, from: runAt),
+                "Hour": calendar.component(.hour, from: runAt),
+                "Minute": calendar.component(.minute, from: runAt),
+            ]]
         }
     }
 
@@ -33,6 +42,7 @@ public enum LaunchdManager {
         } else {
             entries = "<array>\n" + intervals.map { dictEntry($0) }.joined(separator: "\n") + "\n\t</array>"
         }
+        let runAtLoad = task.schedule == .once ? "\t<key>RunAtLoad</key>\n\t<true/>\n" : ""
         return """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -48,7 +58,7 @@ public enum LaunchdManager {
         \t</array>
         \t<key>StartCalendarInterval</key>
         \t\(entries)
-        \t<key>StandardOutPath</key>
+        \(runAtLoad)\t<key>StandardOutPath</key>
         \t<string>\(StateDirectory.url.path)/helper.log</string>
         \t<key>StandardErrorPath</key>
         \t<string>\(StateDirectory.url.path)/helper.log</string>
@@ -67,6 +77,11 @@ public enum LaunchdManager {
 
     /// Install or replace the launch agent for a task.
     public static func install(task: ScheduledTask, helperPath: String) throws {
+        if task.schedule == .once {
+            guard let runAt = task.runAt, runAt > Date() else {
+                throw CLIError.parseError("one-time task requires a future date")
+            }
+        }
         let url = plistURL(for: task.id)
         try StateDirectory.ensureExists()
         try plistXML(for: task, helperPath: helperPath).write(to: url, atomically: true, encoding: .utf8)
