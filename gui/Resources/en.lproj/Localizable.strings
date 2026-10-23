@@ -14,3 +14,5 @@
 "Choose a future date and time." = "Choose a future date and time.";
 "Unable to Schedule Task" = "Unable to Schedule Task";
 "OK" = "OK";
+"Charging control unavailable" = "Charging control unavailable";
+"Charging control is unavailable on this system. Your saved limits are not being applied." = "Charging control is unavailable on this system. Your saved limits are not being applied.";

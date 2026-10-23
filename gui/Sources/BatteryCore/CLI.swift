@@ -12,6 +12,7 @@ public struct CLIResult: Sendable {
 /// Errors surfaced to the UI layer.
 public enum CLIError: Error, Equatable, Sendable {
     case cliNotFound
+    case chargingControlUnavailable
     case commandFailed(exitCode: Int32, output: String)
     case parseError(String)
 }
@@ -28,6 +29,12 @@ public protocol BatteryCLI: Sendable {
 }
 
 extension BatteryCLI {
+    public func requireChargingControl() async throws {
+        guard try await status().chargingControlAvailable != false else {
+            throw CLIError.chargingControlUnavailable
+        }
+    }
+
     public func runScheduledAction(_ arguments: [String]) async throws -> CLIResult {
         try await run(arguments)
     }
@@ -106,9 +113,6 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
 
     public func status() async throws -> BatteryStatus {
         let result = try await run(["status_csv"])
-        guard result.succeeded else {
-            throw CLIError.commandFailed(exitCode: result.exitCode, output: result.stderr + result.stdout)
-        }
         var parsed = try BatteryStatusParser.parseCSV(result.stdout)
         // A CLI older than v1.3.7 left out the live-state column, and behind
         // it the adapter and low-power columns an older one still dropped.
@@ -159,15 +163,25 @@ public final class ProcessBatteryCLI: BatteryCLI, @unchecked Sendable {
     public func run(_ arguments: [String]) async throws -> CLIResult {
         guard cliExists else { throw CLIError.cliNotFound }
         if Self.isLongRunning(arguments) {
+            if arguments.first == "charge" || arguments.first == "calibrate" {
+                try await requireChargingControl()
+            }
             return try spawnDetached(arguments)
         }
-        return try await runToCompletion(arguments)
+        let result = try await runToCompletion(arguments)
+        guard result.succeeded else {
+            throw CLIError.commandFailed(exitCode: result.exitCode, output: result.stderr + result.stdout)
+        }
+        return result
     }
 
     public func runScheduledAction(_ arguments: [String]) async throws -> CLIResult {
         guard cliExists else { throw CLIError.cliNotFound }
         guard Self.isLongRunning(arguments) else {
             return try await run(arguments)
+        }
+        if arguments.first == "charge" || arguments.first == "calibrate" {
+            try await requireChargingControl()
         }
         return try await runToCompletion(arguments, timeout: nil)
     }

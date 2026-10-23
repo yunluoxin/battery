@@ -4,7 +4,7 @@
 ## Update management
 ## variables are used by this binary as well at the update script
 ## ###############
-BATTERY_CLI_VERSION="v1.3.7"
+BATTERY_CLI_VERSION="v1.3.8"
 
 # If a script may run as root:
 #   - Reset PATH to safe defaults at the very beginning of the script.
@@ -46,6 +46,7 @@ voltage_hyst_max="2"
 binfolder="/usr/local/co.palokaj.battery"
 battery_binary="$binfolder/battery"
 smc_binary="$binfolder/smc"
+native_binary="$binfolder/charge-control"
 
 # GitHub URLs for setup and updates.
 # Temporarily set to your username and branch to test update functionality with your fork.
@@ -163,6 +164,9 @@ ALL ALL = NOPASSWD: FORCE_DISCHARGE_OFF
 ALL ALL = NOPASSWD: FORCE_DISCHARGE_ON
 ALL ALL = NOPASSWD: LED_CONTROL
 
+# macOS 27 native charging actuator. No arbitrary paths or daemon arguments.
+ALL ALL = NOPASSWD: $native_binary on, $native_binary off, $native_binary reset, $native_binary status
+
 # Allow passwordless Low Power Mode toggling (all power sources, -a)
 Cmnd_Alias    LOW_POWER_MODE = /usr/bin/pmset -a lowpowermode 1, /usr/bin/pmset -a lowpowermode 0
 ALL ALL = NOPASSWD: LOW_POWER_MODE
@@ -230,19 +234,18 @@ function valid_voltage() {
 }
 
 function smc_read_hex() {
-	key=$1
-	line=$(echo $($smc_binary -k $key -r))
-	if [[ $line =~ "no data" ]]; then
-		echo
-	else
-		echo ${line#*bytes} | tr -d ' ' | tr -d ')'
-	fi
+	local line hex
+	line=$("$smc_binary" -k "$1" -r 2>/dev/null) || return 1
+	hex=$(printf '%s\n' "$line" | sed -n 's/.*(bytes \([[:xdigit:] ]*\)).*/\1/p' | tr -d ' ' | tr 'A-F' 'a-f')
+	# SMC can print an IOKit error or a zero-size placeholder and still exit 0.
+	[[ "$hex" =~ ^[[:xdigit:]]+$ && $((${#hex} % 2)) -eq 0 ]] || return 1
+	printf '%s\n' "$hex"
 }
 
 function smc_write_hex() {
 	local key=$1
 	local hex_value=$2
-	if ! sudo $smc_binary -k "$key" -w "$hex_value" >/dev/null 2>&1; then
+	if ! sudo -n "$smc_binary" -k "$key" -w "$hex_value" >/dev/null 2>&1; then
 		log "⚠️ Failed to write $hex_value to $key"
 		return 1
 	fi
@@ -252,11 +255,98 @@ function smc_write_hex() {
 ## #########################
 ## Detect supported SMC keys
 ## #########################
-[[ $($smc_binary -k CHTE -r) =~ "no data" ]] && smc_supports_tahoe=false || smc_supports_tahoe=true;
-[[ $($smc_binary -k CH0B -r) =~ "no data" ]] && smc_supports_legacy=false || smc_supports_legacy=true;
-[[ $($smc_binary -k CHIE -r) =~ "no data" ]] && smc_supports_adapter_chie=false || smc_supports_adapter_chie=true;
-[[ $($smc_binary -k CH0I -r) =~ "no data" ]] && smc_supports_adapter_ch0i=false || smc_supports_adapter_ch0i=true;
-[[ $($smc_binary -k CH0J -r) =~ "no data" || $($smc_binary -k CH0J -r) =~ "Error" ]] && smc_supports_adapter_ch0j=false || smc_supports_adapter_ch0j=true;
+smc_supports_tahoe=false
+smc_supports_legacy=false
+smc_supports_adapter_chie=false
+smc_supports_adapter_ch0i=false
+smc_supports_adapter_ch0j=false
+[[ $(smc_read_hex CHTE) =~ ^[[:xdigit:]]{8}$ ]] && smc_supports_tahoe=true
+[[ $(smc_read_hex CH0B) =~ ^[[:xdigit:]]{2}$ ]] && smc_supports_legacy=true
+[[ $(smc_read_hex CHIE) =~ ^[[:xdigit:]]{2}$ ]] && smc_supports_adapter_chie=true
+[[ $(smc_read_hex CH0I) =~ ^[[:xdigit:]]{2}$ ]] && smc_supports_adapter_ch0i=true
+[[ $(smc_read_hex CH0J) =~ ^[[:xdigit:]]{2}$ ]] && smc_supports_adapter_ch0j=true
+
+charging_backend=unavailable
+if [[ "$smc_supports_tahoe" == true ]]; then
+	charging_backend=tahoe
+elif [[ "$smc_supports_legacy" == true ]]; then
+	charging_backend=legacy
+elif [[ -x "$native_binary" && ( "$action" == status* || "$action" == charging || "$action" == charge || "$action" == discharge || "$action" == adapter || "$action" == calibrate || "$action" == maintain* ) ]]; then
+	native_status=$(sudo -n "$native_binary" status 2>/dev/null)
+	if [[ "$native_status" == enabled || "$native_status" == disabled ]]; then
+		charging_backend=native
+	fi
+fi
+
+function require_charging_control() {
+	if [[ "$charging_backend" == unavailable ]]; then
+		log "❌ Charging control is unavailable on this system. The saved limit is not being enforced." >&2
+		return 1
+	fi
+}
+
+function wait_for_charging_service() {
+	# At login launchd can start the user worker before the system actuator.
+	if [[ -x "$native_binary" && "$smc_supports_tahoe" == false && "$smc_supports_legacy" == false ]]; then
+		local reported=false
+		while [[ -x "$native_binary" ]]; do
+			native_status=$(sudo -n "$native_binary" status 2>/dev/null)
+			if [[ "$native_status" == enabled || "$native_status" == disabled ]]; then
+				charging_backend=native
+				return 0
+			fi
+			if [[ "$reported" == false ]]; then
+				log "Waiting for the native charging service"
+				reported=true
+			fi
+			sleep 2
+		done
+	fi
+	require_charging_control
+}
+
+function stop_maintenance_workers() {
+	# launchd recovery and a manually started worker can coexist after an
+	# upgrade. Stop only this user's exact installed maintenance commands.
+	pkill -u "$(id -u)" -f '^/bin/bash (/usr/local/co[.]palokaj[.]battery/battery|/usr/local/bin/battery) maintain(_voltage)?_synchronous( |$)' 2>/dev/null || true
+	rm -f "$pidfile"
+}
+
+function apply_percentage_control() {
+	local percent=$1 lower=$2 upper=$3 state
+	valid_percentage "$percent" || return 1
+	state=$(get_smc_charging_status)
+	if [[ "$state" == unknown ]]; then
+		log "❌ Cannot read the charging control state" >&2
+		return 1
+	fi
+	if [[ "$percent" -ge "$upper" ]]; then
+		disable_charging
+	elif [[ "$percent" -lt "$lower" || "$state" == enabled ]]; then
+		enable_charging
+	else
+		disable_charging
+	fi
+}
+
+function acknowledge_maintenance_start() {
+	if [[ -n "$BATTERY_STARTUP_FILE" && "$BATTERY_STARTUP_FILE" == "$configfolder"/maintain.ready.* ]]; then
+		echo $$ >"$BATTERY_STARTUP_FILE"
+	fi
+}
+
+# Adapter cutoff is intentionally never a fallback for charge inhibition.
+function set_charging_control() {
+	require_charging_control || return 1
+	case "$charging_backend:$1" in
+		native:*) sudo -n "$native_binary" "$1" ;;
+		tahoe:on) smc_write_hex CHTE 00000000 ;;
+		tahoe:off) smc_write_hex CHTE 01000000 ;;
+		legacy:on) smc_write_hex CH0B 00 && smc_write_hex CH0C 00 ;;
+		legacy:off) smc_write_hex CH0B 02 && smc_write_hex CH0C 02 ;;
+		*) return 1 ;;
+	esac
+}
 
 function log_smc_capabilities() {
 	log "SMC capabilities: tahoe=$smc_supports_tahoe legacy=$smc_supports_legacy CHIE=$smc_supports_adapter_chie CH0I=$smc_supports_adapter_ch0i CH0J=$smc_supports_adapter_ch0j"
@@ -275,14 +365,14 @@ function change_magsafe_led_color() {
 
 	if [[ "$color" == "green" ]]; then
 		log "setting LED to green"
-		sudo $smc_binary -k ACLC -w 03
+		sudo -n $smc_binary -k ACLC -w 03 >/dev/null 2>&1 || true
 	elif [[ "$color" == "orange" ]]; then
 		log "setting LED to orange"
-		sudo $smc_binary -k ACLC -w 04
+		sudo -n $smc_binary -k ACLC -w 04 >/dev/null 2>&1 || true
 	else
 		# Default action: reset. Value 00 is a guess and needs confirmation
 		log "resetting LED"
-		sudo $smc_binary -k ACLC -w 00
+		sudo -n $smc_binary -k ACLC -w 00 >/dev/null 2>&1 || true
 	fi
 }
 
@@ -291,25 +381,31 @@ function change_magsafe_led_color() {
 function enable_discharging() {
 	log "🔽🪫 Enabling battery discharging"
 	if [[ "$smc_supports_adapter_chie" == "true" ]]; then
-		smc_write_hex CHIE 08
+		smc_write_hex CHIE 08 || return 1
 	elif [[ "$smc_supports_adapter_ch0j" == "true" ]]; then
-		smc_write_hex CH0J 01
+		smc_write_hex CH0J 01 || return 1
 	else
-		smc_write_hex CH0I 01
+		smc_write_hex CH0I 01 || return 1
 	fi
-	sudo $smc_binary -k ACLC -w 01
+	sudo -n $smc_binary -k ACLC -w 01 >/dev/null 2>&1 || true
 }
 
 function disable_discharging() {
 	log "🔼🪫 Disabling battery discharging"
 	if [[ "$smc_supports_adapter_chie" == "true" ]]; then
-		smc_write_hex CHIE 00
+		smc_write_hex CHIE 00 || return 1
 	elif [[ "$smc_supports_adapter_ch0j" == "true" ]]; then
-		smc_write_hex CH0J 00
+		smc_write_hex CH0J 00 || return 1
 	elif [[ "$smc_supports_adapter_ch0i" == "true" ]]; then
-		smc_write_hex CH0I 00
+		smc_write_hex CH0I 00 || return 1
 	else
-		smc_write_hex CH0I 00
+		log "❌ Adapter control is unavailable" >&2
+		return 1
+	fi
+	# These callers manage charge inhibition separately; adapter recovery must
+	# also remain possible when the operating system has no charge backend.
+	if [[ "$1" == adapter-only || "$charging_backend" == unavailable ]]; then
+		return 0
 	fi
 	# Keep track of status
 	is_charging=$(get_smc_charging_status)
@@ -317,35 +413,19 @@ function disable_discharging() {
 	if ! valid_percentage "$setting"; then
 
 		log "Disabling discharging: No valid maintain percentage set, enabling charging"
-		# use direct commands since enable_charging also calls disable_discharging, and causes an eternal loop
-		if [[ "$smc_supports_tahoe" == "true" ]]; then
-			smc_write_hex CHTE 00000000
-		elif [[ "$smc_supports_legacy" == "true" ]]; then
-			smc_write_hex CH0B 00
-			smc_write_hex CH0C 00
-		else
-			log "⚠️ Unable to reset charging state"
-		fi
+		set_charging_control on || return 1
 		change_magsafe_led_color "orange"
 
 	elif [[ "$battery_percentage" -ge "$setting" && "$is_charging" == "enabled" ]]; then
 
 		log "Disabling discharging: Charge above $setting, disabling charging"
-		disable_charging
+		disable_charging || return 1
 		change_magsafe_led_color "green"
 
 	elif [[ "$battery_percentage" -lt "$setting" && "$is_charging" == "disabled" ]]; then
 
 		log "Disabling discharging: Charge below $setting, enabling charging"
-		# use direct commands since enable_charging also calls disable_discharging, and causes an eternal loop
-		if [[ "$smc_supports_tahoe" == "true" ]]; then
-			smc_write_hex CHTE 00000000
-		elif [[ "$smc_supports_legacy" == "true" ]]; then
-			smc_write_hex CH0B 00
-			smc_write_hex CH0C 00
-		else
-			log "⚠️ Unable to reset charging state"
-		fi
+		set_charging_control on || return 1
 		change_magsafe_led_color "orange"
 
 	fi
@@ -358,30 +438,26 @@ function disable_discharging() {
 # so I'm using both since with only CH0B I noticed sometimes during sleep it does trigger charging
 function enable_charging() {
 	log "🔌🔋 Enabling battery charging"
-	if [[ "$smc_supports_tahoe" == "true" ]]; then
-		smc_write_hex CHTE 00000000
-	elif [[ "$smc_supports_legacy" == "true" ]]; then
-		smc_write_hex CH0B 00
-		smc_write_hex CH0C 00
-	else
-		log "⚠️ Unable to determine SMC keys for enabling charging"
-	fi
-	disable_discharging
+	set_charging_control on || return 1
+	disable_discharging adapter-only
 }
 
 function disable_charging() {
 	log "🔌🪫 Disabling battery charging"
-	if [[ "$smc_supports_tahoe" == "true" ]]; then
-		smc_write_hex CHTE 01000000
-	elif [[ "$smc_supports_legacy" == "true" ]]; then
-		smc_write_hex CH0B 02
-		smc_write_hex CH0C 02
-	else
-		log "⚠️ Unable to determine SMC keys for disabling charging"
-	fi
+	set_charging_control off
 }
 
 function get_smc_charging_status() {
+	if [[ "$charging_backend" == native ]]; then
+		local native_state
+		if [[ "$action" == status* ]]; then
+			native_state=$native_status
+		else
+			native_state=$(sudo -n "$native_binary" status 2>/dev/null) || native_state=unknown
+		fi
+		case "$native_state" in enabled|disabled) echo "$native_state" ;; *) echo unknown ;; esac
+		return
+	fi
 	local status_key="CH0B"
 	if [[ "$smc_supports_tahoe" == "true" ]]; then
 		status_key="CHTE"
@@ -640,6 +716,22 @@ function is_latest_version_installed() {
 ## Actions
 ## ###############
 
+# Fail before stopping another task, altering saved limits, or detaching a
+# worker. An unavailable interface must never look like successful limiting.
+case "$action" in
+	charging|charge|calibrate)
+		require_charging_control || exit 1 ;;
+	maintain)
+		[[ "$setting" == stop ]] || require_charging_control || exit 1 ;;
+esac
+
+# Upstream's script-only updater predates the native service and would leave
+# it installed but uncontrolled. Upgrade this backend and CLI together.
+if [[ -x "$native_binary" && ( "$action" == update || "$action" == reinstall || "$action" == update_silent ) && "$setting" != is_enabled ]]; then
+	log "❌ This installation uses the macOS 27 backend. Update it from the full BatteryKeeper checkout with ./setup.sh --local." >&2
+	exit 1
+fi
+
 # If the config folder or log file were just created by the code above while
 # running as root, set the correct ownership and permissions.
 if [[ $EUID -eq 0 ]]; then
@@ -675,9 +767,9 @@ if [[ "$action" == "visudo" ]]; then
 
 	# If the visudo folder does not exist, make it
 	if ! test -d "$visudo_folder"; then
-		sudo mkdir -p "$visudo_folder"
+		sudo mkdir -p "$visudo_folder" || exit 1
 	fi
-	ensure_owner_mode root wheel 755 "$visudo_folder"
+	ensure_owner_mode root wheel 755 "$visudo_folder" || exit 1
 
 	# If the visudo file is the same (no error, exit code 0), set the permissions just
 	if sudo cmp $visudo_file $visudo_tmpfile &>/dev/null; then
@@ -685,7 +777,7 @@ if [[ "$action" == "visudo" ]]; then
 		echo "☑️  The existing battery visudo file is what it should be for version $BATTERY_CLI_VERSION"
 
 		# Check if file permissions are correct, if not, set them
-		ensure_owner_mode root wheel 440 "$visudo_file"
+		ensure_owner_mode root wheel 440 "$visudo_file" || exit 1
 
 		# Delete tempfolder
 		rm -rf "$tempfolder"
@@ -699,10 +791,10 @@ if [[ "$action" == "visudo" ]]; then
 	if sudo visudo -c -f $visudo_tmpfile &>/dev/null; then
 
 		# Copy the visudo file from tempfile to live location
-		sudo cp $visudo_tmpfile $visudo_file
+		sudo install -m 440 -o root -g wheel "$visudo_tmpfile" "$visudo_file" || exit 1
 
 		# Set correct permissions on visudo file
-		ensure_owner_mode root wheel 440 "$visudo_file"
+		ensure_owner_mode root wheel 440 "$visudo_file" || exit 1
 
 		# Delete tempfolder
 		rm -rf "$tempfolder"
@@ -712,6 +804,7 @@ if [[ "$action" == "visudo" ]]; then
 	else
 		echo "❌ Error validating visudo file, this should never happen:"
 		sudo visudo -c -f $visudo_tmpfile
+		exit 1
 	fi
 
 	exit 0
@@ -804,7 +897,7 @@ if [[ "$action" == "update" ]]; then
 	# Restart background maintenance process if update was installed
 	if [[ -x $battery_binary ]] && [[ "$($battery_binary version)" != "$version_before" ]]; then
 		printf "\n%s\n" "🛠️  Restarting 'battery maintain' ..."
-		$battery_binary maintain recover
+		$battery_binary maintain recover || exit 1
 	fi
 
 	exit 0
@@ -819,11 +912,17 @@ if [[ "$action" == "uninstall" ]]; then
 		read
 	fi
 
-	$battery_binary maintain stop
-	$battery_binary remove_daemon
+	$battery_binary maintain stop || exit 1
+	$battery_binary remove_daemon || exit 1
 
-	enable_charging
-	disable_discharging
+	if [[ -x "$native_binary" ]]; then
+		sudo "$native_binary" reset || exit 1
+		sudo launchctl bootout system/co.palokaj.battery.charge-control || exit 1
+		sudo rm -f /Library/LaunchDaemons/co.palokaj.battery.charge-control.plist || exit 1
+	else
+		enable_charging || exit 1
+	fi
+	disable_discharging adapter-only || exit 1
 
 	sudo rm -fv /usr/local/bin/battery
 	sudo rm -fv /usr/local/bin/smc
@@ -845,13 +944,13 @@ if [[ "$action" == "charging" ]]; then
 	log "Setting $action to $setting"
 
 	# Disable running daemon
-	$battery_binary maintain stop
+	$battery_binary maintain stop || exit 1
 
 	# Set charging to on and off
 	if [[ "$setting" == "on" ]]; then
-		enable_charging
+		enable_charging || exit 1
 	elif [[ "$setting" == "off" ]]; then
-		disable_charging
+		disable_charging || exit 1
 	else
 		log "Error: $setting is not \"on\" or \"off\"."
 		exit 1
@@ -867,13 +966,13 @@ if [[ "$action" == "adapter" ]]; then
 	log "Setting $action to $setting"
 
 	# Disable running daemon
-	$battery_binary maintain stop
+	$battery_binary maintain stop || exit 1
 
 	# Set charging to on and off
 	if [[ "$setting" == "on" ]]; then
-		disable_discharging
+		disable_discharging adapter-only || exit 1
 	elif [[ "$setting" == "off" ]]; then
-		enable_discharging
+		enable_discharging || exit 1
 	else
 		log "Error: $setting is not \"on\" or \"off\"."
 		exit 1
@@ -935,13 +1034,13 @@ if [[ "$action" == "charge" ]]; then
 
 	# Stop battery maintenance if invoked by user from Terminal
 	if [[ "$BATTERY_HELPER_MODE" != "1" ]]; then
-		$battery_binary maintain stop
+		$battery_binary maintain stop || exit 1
 	fi
 
 	# Start charging
 	battery_percentage=$(get_battery_percentage)
 	log "Charging to $setting% from $battery_percentage%"
-	enable_charging # also disables discharging
+	enable_charging || exit 1 # also restores adapter power
 
 	# Loop until battery charging level is reached
 	while [[ "$battery_percentage" -lt "$setting" ]]; do
@@ -956,12 +1055,12 @@ if [[ "$action" == "charge" ]]; then
 
 	done
 
-	disable_charging
+	disable_charging || exit 1
 	log "Charging completed at $battery_percentage%"
 
 	# Try restoring maintenance if invoked by user from Terminal
 	if [[ "$BATTERY_HELPER_MODE" != "1" ]]; then
-		$battery_binary maintain recover
+		$battery_binary maintain recover || exit 1
 	fi
 
 	exit 0
@@ -978,13 +1077,13 @@ if [[ "$action" == "discharge" ]]; then
 
 	# Stop battery maintenance if invoked by user from Terminal
 	if [[ "$BATTERY_HELPER_MODE" != "1" ]]; then
-		$battery_binary maintain stop
+		$battery_binary maintain stop || exit 1
 	fi
 
 	# Start discharging
 	battery_percentage=$(get_battery_percentage)
 	log "Discharging to $setting% from $battery_percentage%"
-	enable_discharging
+	enable_discharging || exit 1
 
 	# Loop until battery charging level is reached
 	while [[ "$battery_percentage" -gt "$setting" ]]; do
@@ -995,12 +1094,12 @@ if [[ "$action" == "discharge" ]]; then
 
 	done
 
-	disable_discharging
+	disable_discharging adapter-only || exit 1
 	log "Discharging completed at $battery_percentage%"
 
 	# Try restoring maintenance if invoked by user from Terminal
-	if [[ "$BATTERY_HELPER_MODE" != "1" ]]; then
-		$battery_binary maintain recover
+	if [[ "$BATTERY_HELPER_MODE" != "1" && "$charging_backend" != unavailable ]]; then
+		$battery_binary maintain recover || exit 1
 	fi
 
 	exit 0
@@ -1010,6 +1109,7 @@ fi
 # Maintain at level
 if [[ "$action" == "maintain_synchronous" ]]; then
 
+	wait_for_charging_service || exit 1
 	log_smc_capabilities
 
 	# Checking if the calibration process is running
@@ -1056,11 +1156,14 @@ if [[ "$action" == "maintain_synchronous" ]]; then
 	fi
 
 	# Check if the user requested that the battery maintenance first discharge to the desired level
+	apply_percentage_control "$(get_battery_percentage)" "$lower_bound" "$upper_bound" || exit 1
+	echo $$ >"$pidfile"
+	acknowledge_maintenance_start
 	if [[ "$subsetting" == "--force-discharge" ]]; then
 		# Before we start maintaining the battery level, first discharge to the target level
 		discharge_target="$lower_bound"
 		log "Triggering discharge to $discharge_target before enabling charging limiter"
-		BATTERY_HELPER_MODE=1 $battery_binary discharge "$discharge_target"
+		BATTERY_HELPER_MODE=1 $battery_binary discharge "$discharge_target" || exit 1
 		log "Discharge pre battery-maintenance complete, continuing to battery maintenance loop"
 	else
 		log "Not triggering discharge as it is not requested"
@@ -1080,24 +1183,32 @@ if [[ "$action" == "maintain_synchronous" ]]; then
 
 		# Keep track of status
 		is_charging=$(get_smc_charging_status)
+		if [[ "$is_charging" == unknown ]]; then
+			if [[ "$waiting_for_control" != true ]]; then
+				log "Charging control is temporarily unavailable; waiting to resume maintenance"
+			fi
+			waiting_for_control=true
+			sleep 5
+			continue
+		fi
+		waiting_for_control=false
 		ac_attached=$(get_charger_state)
 
 		if [[ "$battery_percentage" -ge "$upper_bound" && ("$is_charging" == "enabled" || "$ac_attached" == "1") ]]; then
 
 			log "Charge at or above $upper_bound%"
 			if [[ "$is_charging" == "enabled" ]]; then
-				disable_charging
+				disable_charging || exit 1
 			fi
 			change_magsafe_led_color "green"
 
 		elif [[ "$battery_percentage" -lt "$lower_bound" && "$is_charging" == "disabled" ]]; then
 
 			log "Charge below $lower_bound%"
-			enable_charging
+			enable_charging || exit 1
 			change_magsafe_led_color "orange"
 
 		fi
-
 		sleep 60
 
 		battery_percentage=$(get_battery_percentage)
@@ -1111,6 +1222,7 @@ fi
 # Maintain at voltage
 if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 
+	wait_for_charging_service || exit 1
 	log_smc_capabilities
 
 	# Recover old maintain status if old setting is found
@@ -1134,6 +1246,8 @@ if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 	lower_voltage=$(echo "$setting - $subsetting" | bc -l)
 	upper_voltage=$(echo "$setting + $subsetting" | bc -l)
 	log "Keeping voltage between ${lower_voltage}V and ${upper_voltage}V"
+	echo $$ >"$pidfile"
+	acknowledge_maintenance_start
 
 	# Loop
 	while true; do
@@ -1141,11 +1255,11 @@ if [[ "$action" == "maintain_voltage_synchronous" ]]; then
 
 		if (($(echo "$voltage < $lower_voltage" | bc -l))) && [[ "$is_charging" == "disabled" ]]; then
 			log "Battery at ${voltage}V"
-			enable_charging
+			enable_charging || exit 1
 		fi
 		if (($(echo "$voltage >= $upper_voltage" | bc -l))) && [[ "$is_charging" == "enabled" ]]; then
 			log "Battery at ${voltage}V"
-			disable_charging
+			disable_charging || exit 1
 		fi
 
 		sleep 60
@@ -1163,28 +1277,37 @@ if [[ "$action" == "maintain" ]]; then
 
 	assert_not_running_as_root
 
-	disable_discharging
-
-	# Kill old process silently
-	if test -f "$pidfile"; then
-		log "Killing old maintain process at $(cat $pidfile)"
-		pid=$(cat "$pidfile" 2>/dev/null)
-		kill $pid &>/dev/null
-	fi
-
-	if test -f "$calibrate_pidfile"; then
-		pid=$(cat "$calibrate_pidfile" 2>/dev/null)
-		kill $pid &>/dev/null
-		log "🚨 Calibration process have been stopped"
-	fi
-
 	if [[ "$setting" == "stop" ]]; then
-		log "Killing running maintain daemons & enabling charging as default state"
-		rm $pidfile 2>/dev/null
-		$battery_binary disable_daemon
-		enable_charging
+		log "Stopping maintenance and restoring system charging policy"
+		stop_maintenance_workers
+		if [[ -f "$calibrate_pidfile" ]]; then
+			kill "$(cat "$calibrate_pidfile")" 2>/dev/null || true
+			rm -f "$calibrate_pidfile"
+		fi
+		$battery_binary disable_daemon || exit 1
+		disable_discharging adapter-only || exit 1
+		if [[ -x "$native_binary" && "$smc_supports_tahoe" == false && "$smc_supports_legacy" == false ]]; then
+			sudo -n "$native_binary" reset || exit 1
+		elif [[ "$charging_backend" != unavailable ]]; then
+			enable_charging || exit 1
+		fi
 		$battery_binary status
 		exit 0
+	fi
+
+	recover_requested=false
+	if [[ "$setting" == recover ]]; then
+		recover_requested=true
+		if [[ -s "$maintain_voltage_tracker_file" ]]; then
+			read -r setting subsetting <"$maintain_voltage_tracker_file"
+			setting="${setting}V"
+			subsetting="${subsetting}V"
+		elif [[ -s "$maintain_percentage_tracker_file" ]]; then
+			setting=$(cat "$maintain_percentage_tracker_file")
+		else
+			log "No saved maintenance setting to recover"
+			exit 0
+		fi
 	fi
 
 	# Check if setting is a voltage
@@ -1220,24 +1343,59 @@ if [[ "$action" == "maintain" ]]; then
 
 	fi
 
+	stop_maintenance_workers
+	if test -f "$calibrate_pidfile"; then
+		pid=$(cat "$calibrate_pidfile" 2>/dev/null)
+		kill $pid &>/dev/null
+		log "🚨 Calibration process have been stopped"
+	fi
+	disable_discharging adapter-only || exit 1
+
+	# Confirm the initial write before returning success to the GUI. The
+	# worker keeps this state between the lower and upper thresholds.
+	if [[ "$is_voltage" == false ]]; then
+		if valid_percentage_range "$setting"; then
+			apply_percentage_control "$(get_battery_percentage)" "${setting%-*}" "${setting#*-}" || exit 1
+		else
+			apply_percentage_control "$(get_battery_percentage)" "$setting" "$setting" || exit 1
+		fi
+	fi
+
 	# Start maintenance script
+	startup_file=$(mktemp "$configfolder/maintain.ready.XXXXXX") || exit 1
 	if [ "$is_voltage" = true ]; then
 		log "Starting battery maintenance at ${setting}V ±${subsetting}V"
-		nohup $battery_binary maintain_voltage_synchronous $setting $subsetting >>$logfile &
+		BATTERY_STARTUP_FILE="$startup_file" nohup $battery_binary maintain_voltage_synchronous $setting $subsetting >>$logfile 2>&1 &
 	else
 		if valid_percentage_range "$setting"; then
 			log "Starting battery maintenance between ${setting/-/% and }%"
 		else
 			log "Starting battery maintenance at $setting% $subsetting"
 		fi
-		nohup $battery_binary maintain_synchronous $setting $subsetting >>$logfile &
+		BATTERY_STARTUP_FILE="$startup_file" nohup $battery_binary maintain_synchronous $setting $subsetting >>$logfile 2>&1 &
 	fi
 
 	# Store pid of maintenance process and setting
 	echo $! >$pidfile
 	pid=$(cat "$pidfile" 2>/dev/null)
+	startup_confirmed=false
+	for ((attempt = 0; attempt < 150; attempt++)); do
+		if [[ "$(cat "$startup_file")" == "$pid" ]]; then
+			startup_confirmed=true
+			break
+		fi
+		kill -0 "$pid" 2>/dev/null || break
+		sleep 0.1
+	done
+	rm -f "$startup_file"
+	if [[ "$startup_confirmed" != true ]]; then
+		kill "$pid" 2>/dev/null || true
+		rm -f "$pidfile"
+		log "❌ Maintenance worker failed to start; see $logfile" >&2
+		exit 1
+	fi
 
-	if ! [[ "$setting" == "recover" ]]; then
+	if [[ "$recover_requested" == false ]]; then
 
 		rm "$maintain_percentage_tracker_file" "$maintain_voltage_tracker_file" 2>/dev/null
 
@@ -1259,7 +1417,7 @@ if [[ "$action" == "maintain" ]]; then
 	fi
 
 	# Enable the daemon that continues maintaining after reboot
-	$battery_binary create_daemon
+	$battery_binary create_daemon || exit 1
 
 	exit 0
 
@@ -1269,7 +1427,7 @@ fi
 if [[ "$action" == "calibrate" ]]; then
 
 	# Stop the maintaining
-	$battery_binary maintain stop &>/dev/null
+	$battery_binary maintain stop || exit 1
 
 	# Kill old process silently
 	if test -f "$calibrate_pidfile"; then
@@ -1277,28 +1435,29 @@ if [[ "$action" == "calibrate" ]]; then
 		kill $pid &>/dev/null
 	fi
 	echo $$ >$calibrate_pidfile
+	trap 'rm -f "$calibrate_pidfile"' EXIT
 
 	echo -e "Starting battery calibration\n"
 
 	echo "[ 1 ] Discharging battery to 15%"
-	BATTERY_HELPER_MODE=1 $battery_binary discharge 15 &>/dev/null
+	BATTERY_HELPER_MODE=1 $battery_binary discharge 15 || exit 1
 
 	echo "[ 2 ] Charging to 100%"
-	BATTERY_HELPER_MODE=1 $battery_binary charge 100 &>/dev/null
+	BATTERY_HELPER_MODE=1 $battery_binary charge 100 || exit 1
 
 	echo "[ 3 ] Reached 100%, waiting for 1 hour"
-	enable_charging &>/dev/null
+	enable_charging || exit 1
 	sleep 3600
 
 	echo "[ 4 ] Discharging battery to 80%"
-	BATTERY_HELPER_MODE=1 $battery_binary discharge 80 &>/dev/null
+	BATTERY_HELPER_MODE=1 $battery_binary discharge 80 || exit 1
 
 	# Remove pidfile
 	rm -f $calibrate_pidfile
 
 	# Recover old maintain status
 	echo "[ 5 ] Restarting battery maintenance"
-	$battery_binary maintain recover &>/dev/null
+	$battery_binary maintain recover || exit 1
 
 	echo -e "\n✅ Done\n"
 	exit 0
@@ -1323,7 +1482,9 @@ if [[ "$action" == "status" ]]; then
 		log "Low Power Mode: $low_power_actual (managed by battery CLI)"
 	fi
 
-	if test -f $pidfile; then
+	if [[ "$charging_backend" == unavailable ]]; then
+		log "⚠️ Charging control unavailable; saved limits are not being enforced"
+	elif test -f $pidfile && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
 		maintain_percentage=$(cat $maintain_percentage_tracker_file 2>/dev/null)
 		if [[ $maintain_percentage ]]; then
 			if valid_percentage_range "$maintain_percentage"; then
@@ -1344,15 +1505,16 @@ fi
 # Status logger in csv format
 if [[ "$action" == "status_csv" ]]; then
 
-	# The last three columns (adapter attached, low power mode, live power
-	# state) were added in v1.3.6 and v1.3.7 so a caller can get the whole
+	# Columns 6-8 (adapter attached, low power mode, live power state) were
+	# added in v1.3.6/v1.3.7; v1.3.8 appends the charging backend in column 9.
+	# A caller can get the whole
 	# picture from one invocation. They are appended rather than inserted,
 	# leaving the first five columns — the ones every existing consumer reads
 	# by position — exactly as they were.
 	#
 	# Columns 3 and 4 stay the charging *permission* flags they have always
 	# been; column 8 is what says whether the pack is actually moving charge.
-	echo "$(get_battery_percentage),$(get_remaining_time),$(get_smc_charging_status),$(get_smc_discharging_status),$(get_maintain_percentage),$(get_adapter_attached),$(get_low_power_enabled),$(get_live_power_state)"
+	echo "$(get_battery_percentage),$(get_remaining_time),$(get_smc_charging_status),$(get_smc_discharging_status),$(get_maintain_percentage),$(get_adapter_attached),$(get_low_power_enabled),$(get_live_power_state),$charging_backend"
 
 fi
 
@@ -1414,7 +1576,7 @@ if [[ "$action" == "create_daemon" ]]; then
 	fi
 
 	# enable daemon
-	launchctl enable "gui/$(id -u $USER)/com.battery.app"
+	launchctl enable "gui/$(id -u $USER)/com.battery.app" || exit 1
 	exit 0
 
 fi
@@ -1423,7 +1585,7 @@ fi
 if [[ "$action" == "disable_daemon" ]]; then
 
 	log "Disabling daemon at gui/$(id -u $USER)/com.battery.app"
-	launchctl disable "gui/$(id -u $USER)/com.battery.app"
+	launchctl disable "gui/$(id -u $USER)/com.battery.app" || exit 1
 	exit 0
 
 fi
@@ -1431,7 +1593,7 @@ fi
 # Remove daemon
 if [[ "$action" == "remove_daemon" ]]; then
 
-	rm $daemon_path 2>/dev/null
+	rm -f "$daemon_path" || exit 1
 	exit 0
 
 fi

@@ -28,6 +28,8 @@
 "Unknown" = "未知";
 "Loading…" = "加载中…";
 "Unavailable" = "不可用";
+"Charging control unavailable" = "充电控制不可用";
+"Charging control is unavailable on this system. Your saved limits are not being applied." = "当前系统无法控制充电。已保留你的电量区间设置，但目前无法执行。";
 
 /* MARK: - 通用设置页 */
 "Launch at login" = "登录时启动";

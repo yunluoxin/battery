@@ -51,6 +51,7 @@ public enum CalibrationTracker {
 
     /// Launch `battery calibrate` detached (it runs for hours), record state.
     public static func start(cli: BatteryCLI) async throws {
+        try await cli.requireChargingControl()
         // `battery calibrate` is a long-running foreground script; run detached.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: ProcessBatteryCLI.defaultBinaryPath)

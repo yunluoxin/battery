@@ -2,7 +2,7 @@ import Foundation
 
 /// Parsed from `battery status_csv`:
 /// percentage,remaining_time,charging_status,discharging_status,maintain,
-/// adapter_attached,low_power_enabled,live_power_state
+/// adapter_attached,low_power_enabled,live_power_state,charging_control_backend
 public struct BatteryStatus: Equatable, Sendable {
     public var percentage: Int
     public var remainingTime: String
@@ -27,8 +27,10 @@ public struct BatteryStatus: Equatable, Sendable {
     /// the top of a maintain band, sits on AC without charging — and that is
     /// exactly the state the system battery icon marks with a plug.
     public var adapterAttached: Bool
+    /// Nil means the CLI did not report a recognized charging-control backend.
+    public var chargingControlAvailable: Bool?
 
-    public init(percentage: Int, remainingTime: String, charging: Bool, discharging: Bool, maintain: String?, lowPowerOn: Bool = false, adapterAttached: Bool = false) {
+    public init(percentage: Int, remainingTime: String, charging: Bool, discharging: Bool, maintain: String?, lowPowerOn: Bool = false, adapterAttached: Bool = false, chargingControlAvailable: Bool? = nil) {
         self.percentage = percentage
         self.remainingTime = remainingTime
         self.charging = charging
@@ -36,6 +38,7 @@ public struct BatteryStatus: Equatable, Sendable {
         self.maintain = maintain
         self.lowPowerOn = lowPowerOn
         self.adapterAttached = adapterAttached
+        self.chargingControlAvailable = chargingControlAvailable
     }
 
     /// Whether the CLI that produced this status predates v1.3.6 and left the
@@ -112,6 +115,16 @@ public enum BatteryStatusParser {
         // live state: it carries pmset's own state word, where the other two
         // carry the charging permission flags.
         let liveState = fields.count > 7 ? fields[7].lowercased() : ""
+        let chargingControlAvailable: Bool?
+        if fields.count > 8 {
+            chargingControlAvailable = switch fields[8].lowercased() {
+            case "legacy", "tahoe", "native": true
+            case "unsupported", "unavailable": false
+            default: nil
+            }
+        } else {
+            chargingControlAvailable = fields[2].lowercased() == "unknown" ? false : nil
+        }
         // Columns 3 and 4 say whether charging and discharging are *allowed*.
         // With no live column to go on, both flags stay off rather than
         // falling back to them: an unknown state has to read as "not
@@ -125,7 +138,8 @@ public enum BatteryStatusParser {
             discharging: liveState == LivePowerState.discharging.rawValue,
             maintain: (maintain?.isEmpty == false) ? maintain : nil,
             lowPowerOn: lowPowerOn,
-            adapterAttached: adapterAttached
+            adapterAttached: adapterAttached,
+            chargingControlAvailable: chargingControlAvailable
         )
         status.powerColumnsMissing = fields.count <= 6
         status.liveStateColumnMissing = liveState.isEmpty

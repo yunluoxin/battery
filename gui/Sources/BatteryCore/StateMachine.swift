@@ -40,7 +40,12 @@ public enum CompletionHandler {
 
     /// Called when the poll loop observes a charge/discharge reached its target.
     /// Applies the configured post-completion behavior.
-    public static func handleCompletion(config: AppConfig, cli: BatteryCLI) async throws {
+    public static func handleCompletion(config: AppConfig, cli: BatteryCLI, chargingControlAvailable: Bool? = nil) async throws {
+        if chargingControlAvailable == false {
+            // Finish a manual discharge without trying to resume unsupported charging control.
+            _ = try await cli.setAdapter(true)
+            return
+        }
         switch config.postCompletion {
         case .resumeMaintain:
             if config.maintainEnabled {
@@ -53,10 +58,12 @@ public enum CompletionHandler {
         }
     }
 
-    /// Return the Mac to stock behavior: no maintain, charging on, adapter on.
-    public static func restoreDefault(cli: BatteryCLI) async throws {
+    /// Stop maintenance and restore adapter power, resetting charging when supported.
+    public static func restoreDefault(cli: BatteryCLI, chargingControlAvailable: Bool? = nil) async throws {
         _ = try await cli.maintainStop()
-        _ = try await cli.setCharging(true)
+        if chargingControlAvailable != false {
+            _ = try await cli.setCharging(true)
+        }
         _ = try await cli.setAdapter(true)
     }
 }
@@ -81,6 +88,9 @@ public enum ModeDeriver {
 
     /// Current mode from user intent, adjusted by what the CLI reports.
     public static func derive(config: AppConfig, status: BatteryStatus, calibrating: Bool) -> OperatingMode {
+        if status.chargingControlAvailable == false {
+            return config.dischargeActive ? .dischargingTo(config.dischargeTarget) : .idle
+        }
         if calibrating { return .calibrating }
         if config.chargeActive { return .chargingTo(config.chargeTarget) }
         if config.dischargeActive { return .dischargingTo(config.dischargeTarget) }

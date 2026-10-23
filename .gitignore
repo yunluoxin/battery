@@ -3,3 +3,5 @@
 !.github
 !.vscode
 CLAUDE.md
+native/build/
+__pycache__/

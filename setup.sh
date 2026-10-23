@@ -22,6 +22,8 @@
 
 # Reset PATH to minimal safe defaults
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
+set -e
+set -o pipefail
 
 # Resolve the project directory from this script's location, not the caller's cwd.
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -63,14 +65,20 @@ pidfile=$configfolder/battery.pid
 logfile=$configfolder/battery.log
 launch_agent_plist=/Users/$calling_user/Library/LaunchAgents/battery.plist
 path_configfile=/etc/paths.d/50-battery
+native_label=co.palokaj.battery.charge-control
+native_plist=/Library/LaunchDaemons/$native_label.plist
+native_log=/var/log/batterykeeper-charge-control.log
+install_native=false
+if [[ "$(uname -s)" == Darwin ]]; then
+	macos_version="$(sw_vers -productVersion)"
+	if [[ "${macos_version%%.*}" -ge 27 ]]; then
+		install_native=true
+	fi
+fi
 
 # Ask for sudo once, in most systems this will cache the permissions for a bit
 sudo echo "🔋 Starting battery installation"
 echo "[  1 ] Superuser permissions acquired."
-
-# Cleanup after versions 1_3_2 and below
-sudo rm -f /usr/local/bin/battery
-sudo rm -f /usr/local/bin/smc
 
 echo "[  2 ] Allocate temp folder"
 tempfolder="$(mktemp -d)"
@@ -120,6 +128,47 @@ else
 	rm "$batteryfolder/repo.zip"
 fi
 
+if [[ "$install_native" == true ]]; then
+	# Build before touching the working installation. Old upstream archives do
+	# not contain this backend; never fetch an unrelated executable as a fallback.
+	if [[ ! -f "$batteryfolder/native/build.sh" || ! -f "$batteryfolder/native/$native_label.plist" ]]; then
+		echo "❌ macOS 27 requires the native charging backend, which this source does not contain."
+		echo "   Install from the complete BatteryKeeper checkout with: $script_dir/setup.sh --local"
+		exit 1
+	fi
+	echo "[  3 ] Build the native charging backend"
+	if [[ "$local_mode" == true && $EUID -eq 0 ]]; then
+		sudo -u "$calling_user" bash "$batteryfolder/native/build.sh"
+	else
+		bash "$batteryfolder/native/build.sh"
+	fi
+	if [[ ! -x "$batteryfolder/native/build/charge-control" ]]; then
+		echo "❌ Native charging backend build did not produce an executable."
+		exit 1
+	fi
+	plutil -lint "$batteryfolder/native/$native_label.plist"
+	if [[ -L "$native_log" ]]; then
+		echo "❌ Refusing to use a symlink for the privileged charging log: $native_log"
+		exit 1
+	fi
+	if [[ -x "$binfolder/charge-control" ]]; then
+		# reset is synchronous and uses the old daemon; it must finish before bootout.
+		echo "[  3 ] Restore charging policies before replacing the native backend"
+		sudo "$binfolder/charge-control" reset
+	fi
+	if sudo launchctl print "system/$native_label" >/dev/null 2>&1; then
+		if [[ ! -x "$binfolder/charge-control" ]]; then
+			echo "❌ The existing charging daemon has no reset executable; repair it before updating."
+			exit 1
+		fi
+		sudo launchctl bootout "system/$native_label"
+	fi
+fi
+
+# Cleanup after versions 1_3_2 and below, once source validation has succeeded.
+sudo rm -f /usr/local/bin/battery
+sudo rm -f /usr/local/bin/smc
+
 echo "[  4 ] Make sure $binfolder is recreated and owned by root"
 sudo rm -rf "$binfolder" # start with an empty $binfolder and ensure there is no symlink or file at the path
 sudo install -d -m 755 -o root -g wheel "$binfolder"
@@ -129,6 +178,13 @@ sudo install -m 755 -o root -g wheel "$batteryfolder/dist/smc" "$binfolder/smc"
 
 echo "[  6 ] Install battery script into $binfolder"
 sudo install -m 755 -o root -g wheel "$batteryfolder/battery.sh" "$binfolder/battery"
+if [[ "$install_native" == true ]]; then
+	sudo install -m 755 -o root -g wheel "$batteryfolder/native/build/charge-control" "$binfolder/charge-control"
+	sudo install -m 644 -o root -g wheel "$batteryfolder/native/$native_label.plist" "$native_plist"
+	sudo touch "$native_log"
+	sudo chown root:wheel "$native_log"
+	sudo chmod 644 "$native_log"
+fi
 
 echo "[  7 ] Make sure the PATH environment variable includes '$binfolder'"
 if ! grep -qF "$binfolder" $path_configfile 2>/dev/null; then
@@ -160,12 +216,33 @@ sudo chmod -h 644 $pidfile
 
 # Fix permissions for 'create_daemon' action
 echo "[  9 ] Fix ownership and permissions for $(dirname "$launch_agent_plist")"
+mkdir -p "$(dirname "$launch_agent_plist")"
 sudo chown -h $calling_user "$(dirname "$launch_agent_plist")"
 sudo chmod -h 755 "$(dirname "$launch_agent_plist")"
-sudo chown -hf $calling_user "$launch_agent_plist" 2>/dev/null
+if [[ -e "$launch_agent_plist" ]]; then
+	sudo chown -h "$calling_user" "$launch_agent_plist"
+fi
 
 echo "[ 10 ] Setup visudo configuration"
 sudo $binfolder/battery visudo
+
+if [[ "$install_native" == true ]]; then
+	echo "[ 10 ] Start the native charging daemon"
+	sudo launchctl bootstrap system "$native_plist"
+	sudo launchctl print "system/$native_label" >/dev/null
+	native_ready=false
+	for attempt in {1..10}; do
+		if sudo "$binfolder/charge-control" status >/dev/null 2>&1; then
+			native_ready=true
+			break
+		fi
+		sleep 0.5
+	done
+	if [[ "$native_ready" != true ]]; then
+		echo "❌ Native charging daemon did not become ready. See $native_log"
+		exit 1
+	fi
+fi
 
 echo "[ 11 ] Remove temp folder $tempfolder"
 rm -rf $tempfolder

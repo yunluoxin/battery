@@ -50,6 +50,10 @@ final class AppState: ObservableObject {
         lowPowerOn
     }
 
+    var chargingControlAvailable: Bool {
+        status?.chargingControlAvailable != false
+    }
+
     // MARK: Lifecycle
 
     func start() {
@@ -139,12 +143,6 @@ final class AppState: ObservableObject {
             // single source of truth.
             lowPowerOn = newStatus.lowPowerOn
 
-            // A good poll clears whatever the last failure reported. Set
-            // before the auto rule runs, so a rule failure in this same poll
-            // survives to the UI instead of being wiped by the poll that
-            // detected it.
-            errorMessage = nil
-
             await applyAutoLowPowerRule(newStatus)
 
             // Detect completion of an active charge/discharge cycle. A grace
@@ -157,14 +155,15 @@ final class AppState: ObservableObject {
                     config.dischargeActive = false
                     cycleStartedAt = nil
                     saveConfig()
-                    try await CompletionHandler.handleCompletion(config: config, cli: cli)
+                    try await CompletionHandler.handleCompletion(config: config, cli: cli,
+                                                                 chargingControlAvailable: newStatus.chargingControlAvailable)
                 }
             }
             mode = ModeDeriver.derive(config: config, status: newStatus, calibrating: calibrating)
         } catch CLIError.cliNotFound {
             cliAvailable = false
         } catch {
-            errorMessage = String(describing: error)
+            show(error)
         }
     }
 
@@ -184,7 +183,7 @@ final class AppState: ObservableObject {
 
     private var activeCycle: OperatingMode? {
         switch activeCycleKind {
-        case .charge: .chargingTo(config.chargeTarget)
+        case .charge: chargingControlAvailable ? .chargingTo(config.chargeTarget) : nil
         case .discharge: .dischargingTo(config.dischargeTarget)
         case nil: nil
         }
@@ -208,8 +207,7 @@ final class AppState: ObservableObject {
     }
 
     func setMaintain(enabled: Bool) {
-        config.maintainEnabled = enabled
-        saveConfig()
+        guard !enabled || chargingControlAvailable else { return }
         Task {
             do {
                 if enabled {
@@ -217,20 +215,36 @@ final class AppState: ObservableObject {
                 } else {
                     _ = try await cli.maintainStop()
                 }
+                config.maintainEnabled = enabled
+                saveConfig()
+                errorMessage = nil
                 await refreshAsync()
-            } catch { show(error) }
+            } catch {
+                if enabled {
+                    config.maintainEnabled = false
+                    saveConfig()
+                }
+                await refreshAsync()
+                show(error)
+            }
         }
     }
 
     func setMaintainRange(_ range: MaintainRange) {
         config.maintainRange = range
         saveConfig()
-        guard config.maintainEnabled else { return }
+        guard config.maintainEnabled && chargingControlAvailable else { return }
         Task {
             do {
                 _ = try await cli.maintain(config.effectiveRange)
+                errorMessage = nil
                 await refreshAsync()
-            } catch { show(error) }
+            } catch {
+                config.maintainEnabled = false
+                saveConfig()
+                await refreshAsync()
+                show(error)
+            }
         }
     }
 
@@ -242,11 +256,12 @@ final class AppState: ObservableObject {
         // config.effectiveRange).
         saveConfig()
         guard config.maintainEnabled else { return }
-        setMaintainRange(config.effectiveRange)
+        setMaintainRange(config.maintainRange)
     }
 
     /// Toggle the shared charge/discharge switchers. They are mutually exclusive.
     func setCharge(active: Bool) {
+        guard !active || chargingControlAvailable else { return }
         config.chargeActive = active
         if active {
             config.dischargeActive = false
@@ -263,18 +278,26 @@ final class AppState: ObservableObject {
         Task {
             do {
                 if active {
-                    // `battery charge` runs maintain-stop internally, but only
-                    // kills the daemon named in the pidfile; an orphaned daemon
-                    // (stale/empty pidfile) survives and keeps forcing charging
-                    // off, defeating the cycle. Sweep all maintain daemons first.
+                    try await cli.requireChargingControl()
+                    // Keep this foreground stop for older CLI versions and to
+                    // report stop failures before detaching the charge cycle.
+                    // Newer CLI versions also sweep workers when charging starts.
                     _ = try await cli.maintainStop()
                     _ = try await cli.charge(to: level)
                 } else {
                     // Manual cancel: restore according to post-completion policy.
-                    try await CompletionHandler.handleCompletion(config: config, cli: cli)
+                    try await CompletionHandler.handleCompletion(config: config, cli: cli,
+                                                                 chargingControlAvailable: status?.chargingControlAvailable)
                 }
+                errorMessage = nil
                 await refreshAsync()
-            } catch { show(error) }
+            } catch {
+                config.chargeActive = false
+                cycleStartedAt = nil
+                saveConfig()
+                await refreshAsync()
+                show(error)
+            }
         }
     }
 
@@ -294,14 +317,22 @@ final class AppState: ObservableObject {
         Task {
             do {
                 if active {
-                    // See setCharge: sweep orphaned maintain daemons first.
+                    // See setCharge: stop maintenance before detaching the cycle.
                     _ = try await cli.maintainStop()
                     _ = try await cli.discharge(to: level)
                 } else {
-                    try await CompletionHandler.handleCompletion(config: config, cli: cli)
+                    try await CompletionHandler.handleCompletion(config: config, cli: cli,
+                                                                 chargingControlAvailable: status?.chargingControlAvailable)
                 }
+                errorMessage = nil
                 await refreshAsync()
-            } catch { show(error) }
+            } catch {
+                config.dischargeActive = false
+                cycleStartedAt = nil
+                saveConfig()
+                await refreshAsync()
+                show(error)
+            }
         }
     }
 
@@ -408,6 +439,7 @@ final class AppState: ObservableObject {
                 // Whether the number visibly changes is still the system's
                 // call: it recomputes the estimate on its own schedule, not on
                 // this call.
+                errorMessage = nil
                 await refreshAsync()
             } catch {
                 await refreshAsync()    // revert to actual system state
@@ -435,11 +467,16 @@ final class AppState: ObservableObject {
     }
 
     func startCalibration() {
+        guard chargingControlAvailable else { return }
         Task {
             do {
                 try await CalibrationTracker.start(cli: cli)
                 calibrating = true
-            } catch { show(error) }
+                errorMessage = nil
+            } catch {
+                await refreshAsync()
+                show(error)
+            }
         }
     }
 
@@ -457,7 +494,9 @@ final class AppState: ObservableObject {
                 config.maintainEnabled = false
                 cycleStartedAt = nil
                 saveConfig()
-                try await CompletionHandler.restoreDefault(cli: cli)
+                try await CompletionHandler.restoreDefault(cli: cli,
+                                                           chargingControlAvailable: status?.chargingControlAvailable)
+                errorMessage = nil
                 await refreshAsync()
             } catch { show(error) }
         }
@@ -493,6 +532,14 @@ final class AppState: ObservableObject {
     private func show(_ error: Error) {
         if case CLIError.cliNotFound = error {
             cliAvailable = false
+            mode = .idle
+            return
+        }
+        if let status {
+            mode = ModeDeriver.derive(config: config, status: status, calibrating: calibrating)
+        }
+        if case CLIError.chargingControlUnavailable = error {
+            errorMessage = Localization.shared.t("Charging control unavailable")
             return
         }
         errorMessage = String(describing: error)

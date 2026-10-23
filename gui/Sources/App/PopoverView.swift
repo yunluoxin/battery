@@ -59,6 +59,19 @@ struct PopoverView: View {
             .background(Color.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             .padding(.bottom, 8)
         }
+        if state.cliAvailable && !state.chargingControlAvailable {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(l10n.t("Charging control unavailable"), systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                Text(l10n.t("Charging control is unavailable on this system. Your saved limits are not being applied."))
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(.orange)
+            .padding(8)
+            .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.bottom, 8)
+        }
         if let error = state.errorMessage {
             Text(error)
                 .font(.caption)
@@ -126,12 +139,12 @@ struct PopoverView: View {
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Toggle("", isOn: Binding(
-                    get: { state.config.maintainEnabled },
+                    get: { state.config.maintainEnabled && state.chargingControlAvailable },
                     set: { state.setMaintain(enabled: $0) }
                 ))
                 .toggleStyle(.switch)
                 .labelsHidden()
-                .disabled(!state.cliAvailable || state.mode == .calibrating)
+                .disabled(!state.cliAvailable || !state.chargingControlAvailable || state.mode == .calibrating)
             }
 
             RangeSlider(
@@ -202,11 +215,11 @@ struct PopoverView: View {
                 .disabled(!state.cliAvailable || state.mode == .calibrating)
 
             Toggle(l10n.t("Charge (Top Up)"), isOn: Binding(
-                get: { state.config.chargeActive },
+                get: { state.config.chargeActive && state.chargingControlAvailable },
                 set: { state.setCharge(active: $0) }
             ))
             .toggleStyle(.switch)
-            .disabled(!state.cliAvailable || state.mode == .calibrating)
+            .disabled(!state.cliAvailable || !state.chargingControlAvailable || state.mode == .calibrating)
 
             Toggle(l10n.t("Discharge"), isOn: Binding(
                 get: { state.config.dischargeActive },
@@ -231,7 +244,7 @@ struct PopoverView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(l10n.t("Calibration"))
                     .font(.headline)
-                Text(state.calibrating ? l10n.t("In progress…") : l10n.t("Idle"))
+                Text(!state.chargingControlAvailable ? l10n.t("Unavailable") : (state.calibrating ? l10n.t("In progress…") : l10n.t("Idle")))
                     .font(.caption)
                     .foregroundStyle(state.calibrating ? .orange : .secondary)
             }
@@ -240,7 +253,7 @@ struct PopoverView: View {
                 Button(l10n.t("Stop")) { state.stopCalibration() }
             } else {
                 Button(l10n.t("Start")) { state.startCalibration() }
-                    .disabled(!state.cliAvailable)
+                    .disabled(!state.cliAvailable || !state.chargingControlAvailable)
             }
         }
     }
