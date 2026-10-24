@@ -3,6 +3,19 @@ import BatteryCore
 import ServiceManagement
 import Combine
 
+/// What asked for a refresh. The answer decides how much the refresh may cost.
+enum RefreshCue {
+    /// The app itself: a user action, the popover opening, the five-minute
+    /// safety net. These already know why they are refreshing, so each one
+    /// reads the CLI in full, and none is subject to the event floor.
+    case explicit
+    /// A PowerEventMonitor event. Carries the reading IOKit handed over for
+    /// free when the event came from IOKit itself; nil for the other sources,
+    /// which announce changes IOKit's battery fields cannot see (a wake, a
+    /// Low Power Mode flip) and therefore always read the CLI in full.
+    case event(PowerSnapshot?)
+}
+
 /// Central observable store for the app: config, live battery status, mode.
 @MainActor
 final class AppState: ObservableObject {
@@ -25,6 +38,12 @@ final class AppState: ObservableObject {
     /// evaluated for completion until this passes. Prevents the race where the
     /// first poll after toggling still sees the pre-cycle percentage.
     private var cycleStartedAt: Date?
+    /// The reading as the last successful full CLI read saw it. An event whose
+    /// IOKit snapshot still matches this changed nothing the CLI reports, so
+    /// its refresh stops at the display patch below instead of running the
+    /// CLI. Cleared when a read fails, so the next event retries the CLI
+    /// rather than comparing against a baseline that predates the failure.
+    private var lastFullSnapshot: PowerSnapshot?
     /// Whether the auto low-power rule may still fire. Cleared by a firing and
     /// restored only once the level has climbed clear of the threshold, so one
     /// drop below the threshold produces one `smc low on` rather than one per
@@ -61,9 +80,12 @@ final class AppState: ObservableObject {
         refresh()
         // Events, not a timer, are what drives the refreshes: the battery
         // level moves on its own schedule, and a fixed interval either lags
-        // behind it or keeps re-reading a level that has not moved.
-        let monitor = PowerEventMonitor { [weak self] in
-            self?.refresh()
+        // behind it or keeps re-reading a level that has not moved. Each
+        // event carries the reading IOKit hands over for free, so a refresh
+        // can tell a level change from an estimate tick before paying for a
+        // CLI run — see refreshAsync.
+        let monitor = PowerEventMonitor { [weak self] snapshot in
+            self?.refresh(.event(snapshot))
         }
         monitor.start()
         eventMonitor = monitor
@@ -122,21 +144,45 @@ final class AppState: ObservableObject {
 
     // MARK: Polling
 
-    func refresh() {
+    func refresh(_ cue: RefreshCue = .explicit) {
         Task {
-            await refreshAsync()
+            await refreshAsync(cue)
         }
     }
 
-    private func refreshAsync() async {
+    private func refreshAsync(_ cue: RefreshCue = .explicit) async {
         if let processCLI = cli as? ProcessBatteryCLI {
             cliAvailable = processCLI.cliExists
         }
         guard cliAvailable else { return }
 
+        // Events first patch the display from the free IOKit reading, so
+        // nothing the user sees waits on the floor below: a percentage that
+        // moved, an adapter that arrived, a bolt that became real — all land
+        // with the event, however recently the CLI last ran. What the patch
+        // cannot see (maintain state, Low Power Mode, the charging backend)
+        // keeps its value from the last full read and is re-read next.
+        //
+        // A reading that matches the last full read then stops here entirely:
+        // most often the event is macOS re-publishing its time-remaining
+        // estimate, which it does about once a minute, and the whole refresh
+        // reduces to that patch. Cycle detection and the auto rule stay on
+        // full reads: they act on CLI-owned state, and a level that has not
+        // moved can neither complete a cycle nor cross the rule's threshold.
+        if case .event(let snapshot) = cue, let snapshot {
+            applyDisplayOnlyUpdate(from: snapshot)
+            if let baseline = lastFullSnapshot, snapshot == baseline {
+                return
+            }
+        }
+
         do {
             let newStatus = try await cli.status()
             status = newStatus
+            // The baseline the next event's snapshot is compared against:
+            // what the world looked like the last time the CLI actually
+            // answered.
+            lastFullSnapshot = PowerSnapshot(status: newStatus)
             calibrating = CalibrationTracker.detectRunningCalibration() != nil
 
             // Always mirror the real system low-power state; pmset is the
@@ -163,8 +209,47 @@ final class AppState: ObservableObject {
         } catch CLIError.cliNotFound {
             cliAvailable = false
         } catch {
+            // The read failed, so the baseline no longer describes the last
+            // thing the CLI confirmed. Clearing it makes the next event
+            // retry the CLI rather than skip against a stale reading.
+            lastFullSnapshot = nil
             show(error)
         }
+    }
+
+    /// Carry an event's IOKit reading to the UI without a CLI run.
+    ///
+    /// These four fields are exactly what IOKit can see, and they only move
+    /// when IOKit says so — otherwise the snapshot would have differed from
+    /// the baseline and the caller would be running the CLI instead. What the
+    /// patch cannot see (maintain state, Low Power Mode, the charging
+    /// backend) keeps its value from the last full read until the next one.
+    /// Republishes only when something actually moved, so estimate ticks that
+    /// repeat the same numbers cost no SwiftUI invalidation at all.
+    private func applyDisplayOnlyUpdate(from snapshot: PowerSnapshot) {
+        guard var refreshed = status else { return }
+        var changed = false
+        if refreshed.percentage != snapshot.percentage {
+            refreshed.percentage = snapshot.percentage
+            changed = true
+        }
+        // `isChargingNow` semantics: charge only moves into a pack that has
+        // an adapter, which is the same test the live-state column applies,
+        // so the field maps onto `charging` one to one in every state.
+        if refreshed.charging != snapshot.isCharging {
+            refreshed.charging = snapshot.isCharging
+            changed = true
+        }
+        if refreshed.adapterAttached != snapshot.adapterAttached {
+            refreshed.adapterAttached = snapshot.adapterAttached
+            changed = true
+        }
+        if let time = snapshot.updatedRemainingTime(for: refreshed), refreshed.remainingTime != time {
+            refreshed.remainingTime = time
+            changed = true
+        }
+        guard changed else { return }
+        status = refreshed
     }
 
     /// The cycle currently under way, if any. Charge and discharge share one

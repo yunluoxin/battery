@@ -5,7 +5,7 @@ This repository contains software that limits the battery charging level of appl
 - `./battery.sh` is the main CLI binary used under the hood
 - `./setup.sh` is the setup script for the binary
 - `./update.sh` is the script used to update the binary
-- `./gui/` contains a Swift/SwiftUI menu bar app that wraps around the CLI (`./gui/build.sh` builds and bundles it, `swift test --package-path ./gui` runs its tests)
+- `./gui/` contains a Swift/SwiftUI menu bar app that wraps around the CLI (`./gui/build.sh` builds and bundles it, `swift test --package-path ./gui` runs its tests); `./gui/README.md` documents the refresh pipeline and which data is read from IOKit in-process versus from the CLI
 - `./dist` contains precompiled binaries that are shipped with the CLI
 
 ## Development flow
